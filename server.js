@@ -196,69 +196,124 @@ async function getTodayRound() {
 }
 
 // ---------------- ROUND GENERATION ----------------
-async function generateRound({ requestedMaxPlayers } = {}) {
-  const round_date = todayIdUTC();
+async function generateRound() {
+  const round_date = todayId();
   const seed = randSeed();
-
-  const desired = clampInt(
-    requestedMaxPlayers ?? FINALE_COUNT_DEFAULT,
-    MIN_PLAYERS,
-    PLAYER_COUNT_MAX
-  );
 
   let mode = "training";
   let post = null;
-  let players = buildTrainingPlayers(desired);
-  let claimed_total = desired;
+  let players = [];
+  let claimed_total = 0;
 
-  // Try live mode if token exists
+  // -------- TRY LIVE MODE --------
   if (IG_ACCESS_TOKEN) {
     try {
       const latest = await getLatestMedia();
+
       if (latest?.id) {
         post = latest;
-        const comments = await getComments(latest.id);
-        const livePlayers = buildLivePlayersFromComments(comments, PLAYER_COUNT_MAX);
 
-        if (livePlayers.length >= MIN_PLAYERS) {
+        const comments = await getComments(latest.id);
+
+        // Deduplicate by username
+        const seen = new Set();
+        const unique = [];
+
+        for (const c of comments) {
+          const username = (c.username || "").trim();
+          if (!username) continue;
+
+          const key = username.toLowerCase();
+          if (seen.has(key)) continue;
+          if (!qualifies(c.text)) continue;
+
+          seen.add(key);
+          unique.push({
+            handle: username,
+            source: "comment"
+          });
+        }
+
+        claimed_total = unique.length;
+
+        if (claimed_total >= MIN_PLAYERS) {
           mode = "live";
 
-          // “max available up to 100” behavior
-          const liveCount = clampInt(livePlayers.length, MIN_PLAYERS, PLAYER_COUNT_MAX);
-          players = livePlayers.slice(0, liveCount);
-          claimed_total = liveCount;
+          // Deterministic shuffle
+          const shuffled = shuffle(unique);
+
+          const finale_count = Math.max(
+            MIN_PLAYERS,
+            Math.min(claimed_total, PLAYER_COUNT_MAX)
+          );
+
+          players = shuffled.slice(0, finale_count);
+
         } else {
-          // no qualified commenters => training fallback but keep post metadata
           mode = "training";
         }
       }
-    } catch (e) {
-      console.warn("IG fetch failed; using training fallback:", e?.message || e);
+    } catch (err) {
+      // Fail gracefully into training mode
       mode = "training";
     }
   }
 
-  const finale_count = clampInt(
-    Math.min(FINALE_COUNT_DEFAULT, claimed_total),
+  // -------- TRAINING FALLBACK --------
+  if (mode === "training") {
+    claimed_total = Math.max(MIN_PLAYERS, FINALE_COUNT_DEFAULT);
+
+    players = [];
+    for (let i = 0; i < claimed_total; i++) {
+      players.push({
+        handle: `#${i + 1}`,
+        source: "training"
+      });
+    }
+  }
+
+  // -------- FINALIZE FINALE COUNT --------
+  const finale_count = Math.max(
     MIN_PLAYERS,
-    claimed_total
+    Math.min(claimed_total, PLAYER_COUNT_MAX)
   );
+
+  players = players.slice(0, finale_count);
+
+  // -------- DETERMINISTIC WINNER --------
+  const winnerIndex = seed % finale_count;
+  const winner = players[winnerIndex].handle;
+
+  // Add slot numbering
+  players = players.map((p, i) => ({
+    slot: i + 1,
+    handle: p.handle,
+    img: null,
+    source: p.source
+  }));
 
   const row = {
     round_date,
     mode,
-    status: "pending",
+    status: "ready",
     claimed_total,
     finale_count,
     seed,
-    post,     // jsonb nullable
-    players,  // jsonb not null
-    winner: null,
-    winner_slot: null,
-    winner_set_at: null,
+    post,
+    players,
+    winner,
+    winner_slot: winnerIndex + 1,
+    winner_set_at: null
   };
 
-  await upsertRound(row);
+  const { error } = await supabase
+    .from("rounds")
+    .upsert(row, { onConflict: "round_date" });
+
+  if (error) {
+    throw new Error(`Supabase upsert failed: ${error.message}`);
+  }
+
   return row;
 }
 
