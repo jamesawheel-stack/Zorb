@@ -162,7 +162,7 @@ function buildLivePlayersFromComments(comments, desiredCount) {
 
 async function upsertRound(row) {
   const { error } = await supabase
-    .from("zorbblez_rounds")
+    .from("rounds")
     .upsert(row, { onConflict: "round_date" });
 
   if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
@@ -170,7 +170,7 @@ async function upsertRound(row) {
 
 async function getTodayRound() {
   const { data, error } = await supabase
-    .from("zorbblez_rounds")
+    .from("rounds")
     .select("*")
     .eq("round_date", todayId())
     .single();
@@ -337,7 +337,7 @@ app.post("/round/today/winner", async (req, res) => {
 // Leaderboard JSON
 app.get("/leaderboard.json", async (req, res) => {
   const { data, error } = await supabase
-    .from("zorbblez_rounds")
+    .from("rounds")
     .select("winner")
     .not("winner", "is", null);
 
@@ -360,7 +360,7 @@ app.get("/leaderboard.json", async (req, res) => {
 // “Bio line” helper
 app.get("/bio.txt", async (req, res) => {
   const { data, error } = await supabase
-    .from("zorbblez_rounds")
+    .from("rounds")
     .select("winner")
     .not("winner", "is", null);
 
