@@ -252,7 +252,7 @@ async function generateRound({ requestedMaxPlayers } = {}) {
   const row = {
     round_date,
     mode,
-    status: "ready",          // ready for the game to run
+    status: "pending",          // ready for the game to run
     claimed_total,            // total eligible (deduped) for the round
     finale_count,             // dynamic finale (2..100) based on claimed_total
     seed,
