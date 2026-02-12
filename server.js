@@ -3,30 +3,31 @@ import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 const PORT = process.env.PORT || 10000;
 
 // ---------------- ENV ----------------
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim();
+const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
-const ADMIN_KEY = process.env.ADMIN_KEY || "";
-const GAME_ORIGIN = process.env.GAME_ORIGIN || ""; // e.g. https://yourgame.com or https://username.github.io
+const ADMIN_KEY = (process.env.ADMIN_KEY || "").trim();
+const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // e.g. https://username.github.io
 
-// IG (optional for hybrid)
+// IG (optional)
 const IG_ACCESS_TOKEN = (process.env.IG_ACCESS_TOKEN || "").trim();
 const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase();
 
-// counts
+// Counts
 const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap
-const FINALE_COUNT_DEFAULT = Number(process.env.FINALE_COUNT_DEFAULT || 50); // game finale size target
+const FINALE_COUNT_DEFAULT = Number(process.env.FINALE_COUNT_DEFAULT || 50); // finale target
 const MIN_PLAYERS = 2;
 
 // ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.warn("⚠️ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 }
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false },
 });
@@ -35,9 +36,18 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 app.use((req, res, next) => {
   if (GAME_ORIGIN) {
     res.setHeader("Access-Control-Allow-Origin", GAME_ORIGIN);
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-key");
+    res.setHeader("Vary", "Origin");
+  } else {
+    // If you want to test from anywhere temporarily, uncomment:
+    // res.setHeader("Access-Control-Allow-Origin", "*");
   }
+
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, x-admin-key"
+  );
+
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
@@ -52,14 +62,18 @@ function shuffle(arr) {
   return a;
 }
 
-function todayId() {
-  // local “date id” in ISO UTC; good enough for daily round tracking
-  return new Date().toISOString().slice(0, 10);
+function todayIdUTC() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
 }
 
 function randSeed() {
-  // bigint-safe-ish as JS number; stored as text/bigint in DB if desired
   return Date.now() * 1000 + Math.floor(Math.random() * 1000);
+}
+
+function clampInt(n, min, max) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.floor(x)));
 }
 
 function qualifies(text = "") {
@@ -67,10 +81,13 @@ function qualifies(text = "") {
   return String(text).toLowerCase().includes(REQUIRE_KEYWORD);
 }
 
-function clampInt(n, min, max) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return min;
-  return Math.max(min, Math.min(max, Math.floor(x)));
+function requireAdmin(req) {
+  if (!ADMIN_KEY) return true; // allow if unset
+  return req.headers["x-admin-key"] === ADMIN_KEY;
+}
+
+function safeStr(s, maxLen = 80) {
+  return (s ?? "").toString().slice(0, maxLen);
 }
 
 // ---------------- IG HELPERS (optional) ----------------
@@ -85,7 +102,6 @@ async function igFetchJson(url) {
 }
 
 async function getLatestMedia() {
-  // Requires IG Basic Display / graph.instagram.com
   const url =
     `https://graph.instagram.com/me/media` +
     `?fields=id,permalink,timestamp,caption` +
@@ -115,30 +131,29 @@ async function getComments(mediaId) {
   return all;
 }
 
-// ---------------- ROUND GENERATION (HYBRID) ----------------
+// ---------------- PLAYER BUILDERS ----------------
 function buildTrainingPlayers(count) {
-  const players = [];
-  for (let i = 0; i < count; i++) {
-    players.push({
-      slot: i + 1,
-      handle: `#${i + 1}`,
-      img: null,
-      source: "training",
-    });
-  }
-  return players;
+  return Array.from({ length: count }, (_, i) => ({
+    slot: i + 1,
+    handle: `#${i + 1}`,
+    img: null,
+    source: "training",
+  }));
 }
 
-function buildLivePlayersFromComments(comments, desiredCount) {
-  // unique usernames, first qualifying comment counts
+function buildLivePlayersFromComments(comments, cap) {
   const seen = new Set();
   const uniq = [];
-  for (const c of comments) {
+
+  for (const c of comments || []) {
     const username = (c.username || "").trim();
     if (!username) continue;
+
     const key = username.toLowerCase();
     if (seen.has(key)) continue;
+
     if (!qualifies(c.text)) continue;
+
     seen.add(key);
     uniq.push({
       username,
@@ -148,11 +163,11 @@ function buildLivePlayersFromComments(comments, desiredCount) {
     });
   }
 
-  const picked = shuffle(uniq).slice(0, desiredCount);
+  const picked = shuffle(uniq).slice(0, cap);
   return picked.map((c, i) => ({
     slot: i + 1,
     handle: c.username,
-    img: null, // (we can add profile pic pulling later; not reliable via Basic Display)
+    img: null, // profile pics are not reliably available via Basic Display
     source: "comment",
     comment_id: c.comment_id,
     comment_text: c.text,
@@ -160,6 +175,7 @@ function buildLivePlayersFromComments(comments, desiredCount) {
   }));
 }
 
+// ---------------- DB HELPERS ----------------
 async function upsertRound(row) {
   const { error } = await supabase
     .from("rounds")
@@ -172,20 +188,18 @@ async function getTodayRound() {
   const { data, error } = await supabase
     .from("rounds")
     .select("*")
-    .eq("round_date", todayId())
+    .eq("round_date", todayIdUTC())
     .single();
 
   if (error) return null;
   return data;
 }
 
+// ---------------- ROUND GENERATION ----------------
 async function generateRound({ requestedMaxPlayers } = {}) {
-  const round_date = todayId();
+  const round_date = todayIdUTC();
   const seed = randSeed();
 
-  // You want “max followers up to 100” eventually; for now:
-  // - if live mode: use up to PLAYER_COUNT_MAX from qualifying commenters
-  // - if training: default to FINALE_COUNT_DEFAULT (or requested)
   const desired = clampInt(
     requestedMaxPlayers ?? FINALE_COUNT_DEFAULT,
     MIN_PLAYERS,
@@ -197,7 +211,7 @@ async function generateRound({ requestedMaxPlayers } = {}) {
   let players = buildTrainingPlayers(desired);
   let claimed_total = desired;
 
-  // Try live only if token exists
+  // Try live mode if token exists
   if (IG_ACCESS_TOKEN) {
     try {
       const latest = await getLatestMedia();
@@ -208,22 +222,22 @@ async function generateRound({ requestedMaxPlayers } = {}) {
 
         if (livePlayers.length >= MIN_PLAYERS) {
           mode = "live";
-          // If you want “max available up to 100”, do it here:
+
+          // “max available up to 100” behavior
           const liveCount = clampInt(livePlayers.length, MIN_PLAYERS, PLAYER_COUNT_MAX);
           players = livePlayers.slice(0, liveCount);
           claimed_total = liveCount;
         } else {
-          // keep training, but still attach post metadata
+          // no qualified commenters => training fallback but keep post metadata
           mode = "training";
         }
       }
     } catch (e) {
-      // Any IG failure -> training fallback (but don’t crash the service)
+      console.warn("IG fetch failed; using training fallback:", e?.message || e);
       mode = "training";
     }
   }
 
-  // finale_count should be <= claimed_total, and at least 2
   const finale_count = clampInt(
     Math.min(FINALE_COUNT_DEFAULT, claimed_total),
     MIN_PLAYERS,
@@ -237,8 +251,8 @@ async function generateRound({ requestedMaxPlayers } = {}) {
     claimed_total,
     finale_count,
     seed,
-    post,    // jsonb (nullable)
-    players, // jsonb
+    post,     // jsonb nullable
+    players,  // jsonb not null
     winner: null,
     winner_slot: null,
     winner_set_at: null,
@@ -253,7 +267,7 @@ app.get("/", (req, res) => {
   res.json({ ok: true, service: "zorbblez-backend" });
 });
 
-// Quick sanity check (no secrets leaked)
+// Quick sanity check (no secrets)
 app.get("/api/envcheck", (req, res) => {
   res.json({
     ok: true,
@@ -268,13 +282,13 @@ app.get("/api/envcheck", (req, res) => {
   });
 });
 
-// Admin UI (simple)
+// Admin page
 app.get("/admin", (req, res) => {
   res.send(`
     <h2>Zorbblez Admin</h2>
-    <p>Hybrid mode: uses IG if possible, else training.</p>
-    <input id="key" placeholder="Admin Key" style="width:320px; padding:6px;" />
-    <button onclick="gen()" style="padding:6px 10px;">Generate Today’s Round</button>
+    <p>Generate today’s round (live if possible, else training).</p>
+    <input id="key" placeholder="Admin Key" style="width:340px;padding:6px;" />
+    <button onclick="gen()" style="padding:6px 10px;">Generate</button>
     <pre id="out" style="white-space:pre-wrap;"></pre>
     <script>
       async function gen(){
@@ -290,48 +304,64 @@ app.get("/admin", (req, res) => {
 });
 
 app.post("/admin/generate", async (req, res) => {
-  if (ADMIN_KEY && req.headers["x-admin-key"] !== ADMIN_KEY) {
+  if (!requireAdmin(req)) {
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
+  // optional override: /admin/generate?max=72
+  const requestedMaxPlayers = req.query?.max;
+
   try {
-    const round = await generateRound();
+    const round = await generateRound({ requestedMaxPlayers });
     res.json({ ok: true, ...round });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// Game reads today’s round
+// Game reads today’s round (name kept for compatibility)
 app.get("/top50.json", async (req, res) => {
-  let round = await getTodayRound();
-  if (!round) {
-    // If nobody generated yet today, auto-generate a training/live hybrid
-    round = await generateRound();
+  try {
+    let round = await getTodayRound();
+    if (!round) {
+      // auto-generate if not created yet
+      round = await generateRound();
+    }
+    res.json(round);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
-  res.json(round);
 });
 
 // Winner reporting (called by the game)
 app.post("/round/today/winner", async (req, res) => {
-  const { winner, winnerSlot } = req.body || {};
-  const round_date = todayId();
+  try {
+    const round_date = todayIdUTC();
+    const winner = safeStr(req.body?.winner, 64);
+    const winnerSlotRaw = req.body?.winnerSlot;
 
-  const safeWinner = (winner || "").toString().slice(0, 64);
-  const safeSlot = Number.isFinite(Number(winnerSlot)) ? Number(winnerSlot) : null;
+    const winner_slot = Number.isFinite(Number(winnerSlotRaw))
+      ? Number(winnerSlotRaw)
+      : null;
 
-  const { error } = await supabase
-    .from("zorbblez_rounds")
-    .update({
-      status: "complete",
-      winner: safeWinner || null,
-      winner_slot: safeSlot,
-      winner_set_at: new Date().toISOString(),
-    })
-    .eq("round_date", round_date);
+    const { error } = await supabase
+      .from("rounds") // ✅ FIXED: rounds table only
+      .update({
+        status: "complete",
+        winner: winner || null,
+        winner_slot,
+        winner_set_at: new Date().toISOString(),
+      })
+      .eq("round_date", round_date);
 
-  if (error) return res.status(500).json({ ok: false, error: error.message });
-  res.json({ ok: true });
+    if (error) {
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 // Leaderboard JSON
@@ -357,7 +387,7 @@ app.get("/leaderboard.json", async (req, res) => {
   res.json(sorted);
 });
 
-// “Bio line” helper
+// IG bio helper
 app.get("/bio.txt", async (req, res) => {
   const { data, error } = await supabase
     .from("rounds")
