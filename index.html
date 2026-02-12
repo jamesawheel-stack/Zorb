@@ -2,10 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport"
-content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
-/>
-  <title>Zorbblez – Mobile Full v5</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Zorbblez – Mobile Full v5.1</title>
   <style>
     :root {
       --bg: #0B0F1F;
@@ -17,15 +15,14 @@ content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
       --btnHover: rgba(255,255,255,0.18);
       --good: rgba(120,255,170,0.92);
       --warn: rgba(255,210,120,0.92);
+      --bad: rgba(255,120,120,0.92);
     }
-    html, body { margin:0; padding:0; background:var(--bg);
-overflow:hidden; height:100%; }
+    html, body { margin:0; padding:0; background:var(--bg); overflow:hidden; height:100%; }
     canvas { display:block; margin:0 auto; touch-action:none; }
 
     #hud {
       position: fixed; left: 12px; top: 12px; z-index: 10;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
-sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       color: var(--text); font-size: 12px; line-height: 1.25;
       background: var(--panel); border: 1px solid var(--stroke);
       padding: 10px 12px; border-radius: 12px; backdrop-filter: blur(10px);
@@ -37,8 +34,7 @@ sans-serif;
     #panel {
       position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
       z-index: 30;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
-sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       background: var(--panel2); border: 1px solid rgba(255,255,255,0.18);
       padding: 18px 18px 14px; border-radius: 16px;
       color: var(--text);
@@ -47,18 +43,15 @@ sans-serif;
       backdrop-filter: blur(12px);
     }
     #panel h1 { font-size: 18px; margin: 0 0 10px; }
-    #panel p { margin: 8px 0; font-size: 12px; opacity: 0.92;
-line-height: 1.35; }
+    #panel p { margin: 8px 0; font-size: 12px; opacity: 0.92; line-height: 1.35; }
     #panel input { display:none; }
-    #panel .row { display:flex; gap:10px; justify-content:center;
-align-items:center; flex-wrap:wrap; margin-top:10px; }
+    #panel .row { display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; margin-top:10px; }
     #panel .note { font-size:11px; opacity:0.75; margin-top:10px; }
     #panel .status { margin-top: 10px; font-size: 12px; opacity:0.95; }
-    #panel .pill { display:inline-block; padding:6px 10px;
-border-radius:999px; border:1px solid rgba(255,255,255,0.16);
-background: rgba(255,255,255,0.08); }
+    #panel .pill { display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.08); }
     #panel .ok { color: var(--good); }
     #panel .warn { color: var(--warn); }
+    #panel .bad { color: var(--bad); }
 
     #controls {
       position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
@@ -69,8 +62,7 @@ background: rgba(255,255,255,0.08); }
       background: var(--panel2);
       border: 1px solid rgba(255,255,255,0.16);
       backdrop-filter: blur(14px);
-      user-select: none;
-      -webkit-user-select: none;
+      user-select: none; -webkit-user-select: none;
       touch-action: manipulation;
     }
     .btn {
@@ -80,23 +72,20 @@ background: rgba(255,255,255,0.08); }
       padding: 10px 12px;
       border-radius: 14px;
       font-size: 13px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
-sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       cursor: pointer;
       min-width: 64px;
     }
     .btn:active { transform: translateY(1px); background: var(--btnHover); }
     .btn.small { min-width: 52px; padding: 10px 10px; }
     .btn.wide { min-width: 110px; }
-    .btn.primary { border-color: rgba(120,255,170,0.35); background:
-rgba(120,255,170,0.12); }
+    .btn.primary { border-color: rgba(120,255,170,0.35); background: rgba(120,255,170,0.12); }
     .hidden { display:none !important; }
 
     #toast {
       position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
       z-index: 40;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
-sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       font-size: 12px;
       color: var(--text);
       background: rgba(0,0,0,0.55);
@@ -115,16 +104,14 @@ sans-serif;
   <div id="toast">UI shown • will auto-hide for recording</div>
 
   <div id="hud">
-    <b>Zorbblez – Today's Round</b>
+    <b>Zorbblez – Today’s Round</b>
     <div id="hudStatus">Loading…</div>
-    <div class="tiny">Tap background: pause/resume • Tap anywhere when
-UI hidden: show UI</div>
+    <div class="tiny">Tap background: pause/resume • Tap anywhere when UI hidden: show UI</div>
   </div>
 
   <div id="panel">
-    <h1>Load today’s roster</h1>
-    <p>Select up to <b id="maxCountLabel">?</b> profile images. Then press <b>Start</b>
-to begin the countdown.</p>
+    <h1 id="panelTitle">Load today’s roster</h1>
+    <p>Select up to <b id="maxCountLabel">?</b> profile images. Then press <b>Start</b> to begin the countdown.</p>
 
     <div class="row">
       <label class="btn wide" style="display:inline-block;">
@@ -132,13 +119,11 @@ to begin the countdown.</p>
         <input id="fileInput" type="file" accept="image/*" multiple />
       </label>
 
-      <button class="btn wide" id="startNumbers" type="button">Start
-with numbers</button>
+      <button class="btn wide" id="startNumbers" type="button">Start with numbers</button>
     </div>
 
     <div class="row">
-      <button class="btn wide primary" id="startBtn" type="button"
-disabled>Start</button>
+      <button class="btn wide primary" id="startBtn" type="button" disabled>Start</button>
       <button class="btn wide" id="clearBtn" type="button">Clear</button>
     </div>
 
@@ -146,10 +131,10 @@ disabled>Start</button>
       <span class="pill" id="panelRoster">Roster: numbers</span>
       <span class="pill" id="panelZorb">Zorb: …</span>
       <span class="pill" id="panelAudio">Audio: locked</span>
+      <span class="pill" id="panelBackend">Backend: …</span>
     </div>
 
-    <div class="note">Tip: after you press Start, the UI will
-auto-hide in ~2s for clean screen recording.</div>
+    <div class="note">Tip: after you press Start, the UI will auto-hide in ~2s for clean screen recording.</div>
   </div>
 
   <div id="controls">
@@ -163,8 +148,16 @@ auto-hide in ~2s for clean screen recording.</div>
 
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/addons/p5.sound.min.js"></script>
+
   <script>
-  // ---------------- CONFIG ----------------
+  const BACKEND_BASE = "https://zorb.onrender.com";
+  const ROUND_URL    = BACKEND_BASE + "/top50.json";
+  const WINNER_URL   = BACKEND_BASE + "/round/today/winner";
+
+  let ROUND_META = { round_date: null, mode: null, claimed_total: null, finale_count: null, status: null, seed: null };
+  let BACKEND_WINNER = null;
+  let BACKEND_OK = false;
+
   const CFG = {
     aspectW: 9, aspectH: 16,
     baseHeight: 1280,
@@ -176,18 +169,15 @@ auto-hide in ~2s for clean screen recording.</div>
     bubbleMaxR: 58,
     bubbleGlow: 18,
 
-    // Motion (more randomized / fair)
     wanderForce: 0.16,
     maxSpeed: 2.35,
     bounceDamping: 0.985,
     separationStrength: 0.30,
 
-    // Swirl/orbit motion (each bubble gets its own direction/strength)
-    swirlStrength: 0.16,     // tangential pull around center
-    swirlJukeChance: 0.010,  // occasional impulse to break patterns
+    swirlStrength: 0.16,
+    swirlJukeChance: 0.010,
     swirlJukeForce: 1.55,
 
-    // ZORB SIZE + MOTION
     robotScale: 0.15,
     robotY: 0.12,
     robotHoverAmpY: 8,
@@ -195,7 +185,6 @@ auto-hide in ~2s for clean screen recording.</div>
     robotSwayFracX: 0.08,
     robotSwaySpeedX: 0.018,
 
-    // Cannon alignment (tweak these for perfect alignment)
     cannonXFrac: [0.34, 0.50, 0.66],
     cannonYFrac: 0.65,
 
@@ -222,13 +211,11 @@ auto-hide in ~2s for clean screen recording.</div>
     countdownSec: 3,
   };
 
-  // ---------------- AUDIO ----------------
   let audioUnlocked = false;
   let sfxPop = [];
   let sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension;
-
-  let tensionTarget = 0; // 0..1
-  let tensionVol = 0;    // 0..1
+  let tensionTarget = 0;
+  let tensionVol = 0;
   let winnerPlayed = false;
 
   const SFX = {
@@ -242,20 +229,59 @@ auto-hide in ~2s for clean screen recording.</div>
     winner: 0.95
   };
 
-  // ---------------- STATE ----------------
   let zorbImg, zorbLoaded = false;
   let rosterImgs = [];
+  let rosterHandles = [];
   let players = [], projectiles = [], particles = [], stars = [];
   let paused = false, frameShake = 0;
   let zorb = { y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0 };
-  let BACKEND_WINNER = null;
-  let simState = "setup"; // setup | countdown | running | finished
+  let simState = "setup";
   let countdownFrames = 0;
 
-  // UI refs
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl, inputEl;
-  let panelRosterEl, panelZorbEl, panelAudioEl, startBtnEl;
+  let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, startBtnEl;
   let uiHidden = false, hideTimer = null;
+
+  async function loadTodayRound() {
+    try {
+      const res = await fetch(ROUND_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const round = await res.json();
+
+      BACKEND_OK = true;
+
+      const fc = Number(round?.finale_count || (round?.players?.length || 0) || 0);
+      const finalCount = Math.max(2, Math.min(100, fc || 50));
+
+      CFG.playerCount = finalCount;
+      rosterHandles = Array.isArray(round?.players) ? round.players.map(p => (p.handle || ("#" + p.slot))) : [];
+
+      BACKEND_WINNER = round?.winner || null;
+      ROUND_META = {
+        round_date: round?.round_date || null,
+        mode: round?.mode || null,
+        claimed_total: round?.claimed_total ?? null,
+        finale_count: round?.finale_count ?? finalCount,
+        status: round?.status || null,
+        seed: round?.seed ?? null,
+      };
+
+      document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
+      document.getElementById("panelTitle").textContent = (ROUND_META?.mode === "live") ? "Load today’s roster (LIVE)" : "Load today’s roster";
+
+      updateHud();
+      updatePanelStatus();
+      return true;
+    } catch (e) {
+      BACKEND_OK = false;
+      document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
+      document.getElementById("panelTitle").textContent = "Load today’s roster (offline mode)";
+      updateHud();
+      updatePanelStatus();
+      console.warn("Round load failed:", e);
+      return false;
+    }
+  }
 
   function preload() {
     zorbImg = loadImage('Zorb2.PNG?v=4',
@@ -263,13 +289,7 @@ auto-hide in ~2s for clean screen recording.</div>
       () => { zorbLoaded = false; console.warn('Zorb failed to load.'); }
     );
 
-    // Load audio
-    sfxPop = [
-      loadSound('pop1.mp3'),
-      loadSound('pop2.mp3'),
-      loadSound('pop3.mp3'),
-      loadSound('pop4.mp3'),
-    ];
+    sfxPop = [ loadSound('pop1.mp3'), loadSound('pop2.mp3'), loadSound('pop3.mp3'), loadSound('pop4.mp3') ];
     sfxWinner  = loadSound('winner.mp3');
     sfxReload  = loadSound('reload.mp3');
     sfxFire    = loadSound('fire.mp3');
@@ -278,9 +298,10 @@ auto-hide in ~2s for clean screen recording.</div>
     sfxTension = loadSound('tension.wav');
   }
 
-  function setup() {
+  async function setup() {
     createOrResizeCanvas();
     hookUI();
+    await loadTodayRound();
     resetSim(true);
     updatePanelStatus();
     updateHud();
@@ -298,8 +319,7 @@ auto-hide in ~2s for clean screen recording.</div>
 
     stars = [];
     for (let i = 0; i < 120; i++) {
-      stars.push({ x: random(width), y: random(height), r: random(0.8,
-2.2), tw: random(TAU), sp: random(0.006, 0.02) });
+      stars.push({ x: random(width), y: random(height), r: random(0.8,2.2), tw: random(TAU), sp: random(0.006, 0.02) });
     }
   }
 
@@ -314,22 +334,18 @@ auto-hide in ~2s for clean screen recording.</div>
     panelRosterEl = document.getElementById('panelRoster');
     panelZorbEl   = document.getElementById('panelZorb');
     panelAudioEl  = document.getElementById('panelAudio');
+    panelBackendEl= document.getElementById('panelBackend');
     startBtnEl    = document.getElementById('startBtn');
 
-    document.getElementById('btnShowPanel').addEventListener('click',
-() => { showPanel(true); showUI(true); });
-    document.getElementById('btnPause').addEventListener('click', ()
-=> { togglePause(); bumpUI(); });
-    document.getElementById('btnRestart').addEventListener('click', ()
-=> { resetSim(false); showUI(true); showPanel(true); });
-    document.getElementById('btnChaosDown').addEventListener('click',
-() => { CFG.chaos = max(0.35, CFG.chaos - 0.15); bumpUI(); });
-    document.getElementById('btnChaosUp').addEventListener('click', ()
-=> { CFG.chaos = min(3.0, CFG.chaos + 0.15); bumpUI(); });
-    document.getElementById('btnHide').addEventListener('click', () =>
-{ setUIHidden(true); });
+    document.getElementById('btnShowPanel').addEventListener('click', () => { showPanel(true); showUI(true); });
+    document.getElementById('btnPause').addEventListener('click', () => { togglePause(); bumpUI(); });
+    document.getElementById('btnRestart').addEventListener('click', () => { resetSim(false); showUI(true); showPanel(true); });
+    document.getElementById('btnChaosDown').addEventListener('click', () => { CFG.chaos = max(0.35, CFG.chaos - 0.15); bumpUI(); });
+    document.getElementById('btnChaosUp').addEventListener('click', () => { CFG.chaos = min(3.0, CFG.chaos + 0.15); bumpUI(); });
+    document.getElementById('btnHide').addEventListener('click', () => { setUIHidden(true); });
 
-    document.getElementById('startNumbers').addEventListener('click', () => {
+    document.getElementById('startNumbers').addEventListener('click', async () => {
+      await loadTodayRound();
       rosterImgs = [];
       resetSim(false);
       enableStart(true);
@@ -338,7 +354,6 @@ auto-hide in ~2s for clean screen recording.</div>
 
     document.getElementById('clearBtn').addEventListener('click', () => {
       rosterImgs = [];
-      enableStart(false);
       resetSim(true);
       showPanel(true);
       showUI(true);
@@ -349,6 +364,8 @@ auto-hide in ~2s for clean screen recording.</div>
     startBtnEl.addEventListener('click', () => beginCountdown());
 
     inputEl.addEventListener('change', async (e) => {
+      await loadTodayRound();
+
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
 
@@ -361,50 +378,35 @@ auto-hide in ~2s for clean screen recording.</div>
         catch (err) { console.warn('Failed loading', f.name, err); }
       }
 
-      // Optional: shuffle the roster images so upload order ≠ in-game
       shuffleInPlace(rosterImgs);
 
       resetSim(true);
       enableStart(true);
       updatePanelStatus();
-      // Auto-resume when returning to the app/tab (iOS/Safari)
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') onReturnToApp();
-});
-window.addEventListener('pageshow', () => onReturnToApp()); // bfcache restore
-window.addEventListener('focus', () => onReturnToApp());
 
-// Also try to resume audio on any touch/click after return
-document.addEventListener('touchstart', () => resumeAudioNow(), {
-passive: true });
-document.body.addEventListener('click', (e) => {
-  resumeAudioNow();
-
-  if (!panelEl.classList.contains('hidden')) return;
-  if (uiHidden) { showUI(true); bumpUI(); return; }
-  togglePause();
-  bumpUI();
-}, { passive: true });
       showPanel(true);
       showUI(true);
       bumpUI();
     });
 
-    // Tap behavior:
-    // - If UI hidden -> show it
-    // - Else toggle pause
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') onReturnToApp();
+    });
+    window.addEventListener('pageshow', () => onReturnToApp());
+    window.addEventListener('focus', () => onReturnToApp());
+
     document.body.addEventListener('click', (e) => {
+      resumeAudioNow();
+
       if (!panelEl.classList.contains('hidden')) return;
       if (uiHidden) { showUI(true); bumpUI(); return; }
       togglePause();
       bumpUI();
     }, { passive: true });
 
-    // Prevent UI taps from toggling pause
     for (const el of document.querySelectorAll('button, label.btn')) {
       el.addEventListener('click', (ev) => ev.stopPropagation());
-      el.addEventListener('touchstart', (ev) => ev.stopPropagation(),
-{ passive: true });
+      el.addEventListener('touchstart', (ev) => ev.stopPropagation(), { passive: true });
     }
 
     showPanel(true);
@@ -414,13 +416,10 @@ document.body.addEventListener('click', (e) => {
   function enableStart(on) { startBtnEl.disabled = !on; }
   function showPanel(show) { panelEl.classList.toggle('hidden', !show); }
 
-  function togglePause() {
-    if (simState === "setup") return;
-    paused = !paused;
-  }
+  function togglePause() { if (simState !== "setup") paused = !paused; }
 
   function beginCountdown() {
-    unlockAudioOnce(); // iPhone-safe: must be after a user gesture
+    unlockAudioOnce();
     showPanel(false);
     paused = false;
     simState = "countdown";
@@ -428,16 +427,8 @@ document.body.addEventListener('click', (e) => {
     armAutoHide();
   }
 
-  function showUI(withToast) {
-    setUIHidden(false);
-    if (withToast) toastPulse();
-  }
-
-  function setUIHidden(hidden) {
-    uiHidden = hidden;
-    hudEl.classList.toggle('hidden', hidden);
-    controlsEl.classList.toggle('hidden', hidden);
-  }
+  function showUI(withToast) { setUIHidden(false); if (withToast) toastPulse(); }
+  function setUIHidden(hidden) { uiHidden = hidden; hudEl.classList.toggle('hidden', hidden); controlsEl.classList.toggle('hidden', hidden); }
 
   function toastPulse() {
     toastEl.classList.add('show');
@@ -459,10 +450,7 @@ document.body.addEventListener('click', (e) => {
   function fileToP5Image(file) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
-      loadImage(url,
-        (img) => { URL.revokeObjectURL(url); resolve(img); },
-        (err) => { URL.revokeObjectURL(url); reject(err); }
-      );
+      loadImage(url, (img) => { URL.revokeObjectURL(url); resolve(img); }, (err) => { URL.revokeObjectURL(url); reject(err); });
     });
   }
 
@@ -473,14 +461,11 @@ document.body.addEventListener('click', (e) => {
     }
   }
 
-  // ---------------- AUDIO HELPERS ----------------
   function unlockAudioOnce() {
     if (audioUnlocked) return;
     userStartAudio();
     audioUnlocked = true;
     resumeAudioNow();
-
-    // Start tension loop silent; we'll fade it in at final 5
     if (sfxTension) {
       sfxTension.setLoop(true);
       sfxTension.setVolume(0);
@@ -502,47 +487,29 @@ document.body.addEventListener('click', (e) => {
     snd.setVolume(SFX.master * SFX.pop);
     snd.play();
   }
+
   function resumeAudioNow() {
-  if (!audioUnlocked) return;
-
-  // Resume AudioContext if iOS suspended it
-  const ctx = getAudioContext?.();
-  if (ctx && ctx.state === 'suspended') {
-    ctx.resume();
+    if (!audioUnlocked) return;
+    const ctx = getAudioContext?.();
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+    if (sfxTension) {
+      try {
+        if (!sfxTension.isPlaying()) { sfxTension.setLoop(true); sfxTension.play(); }
+        sfxTension.setVolume(SFX.master * SFX.tensionMax * tensionVol);
+      } catch (e) {}
+    }
   }
 
-  // Ensure tension loop is alive after app switching
-  if (sfxTension) {
-    try {
-      if (!sfxTension.isPlaying()) {
-        sfxTension.setLoop(true);
-        sfxTension.play();
-      }
-      sfxTension.setVolume(SFX.master * SFX.tensionMax * tensionVol);
-    } catch (e) {}
+  function onReturnToApp() {
+    paused = false;
+    resumeAudioNow();
+    const ctx = getAudioContext?.();
+    if (audioUnlocked && ctx && ctx.state === 'suspended') { showUI(true); bumpUI(); }
   }
-}
 
-function onReturnToApp() {
-  // Never stay paused after returning
-  paused = false;
-
-  // Try to bring audio back automatically
-  resumeAudioNow();
-
-  // If iOS still blocks audio, show UI so one tap fixes it
-  const ctx = getAudioContext?.();
-  if (audioUnlocked && ctx && ctx.state === 'suspended') {
-    showUI(true);
-    bumpUI();
-  }
-}
-
-  // ---------------- SIM RESET ----------------
   function resetSim(keepSetupState) {
     players = []; projectiles = []; particles = []; frameShake = 0;
-    paused = false;
-    winnerPlayed = false;
+    paused = false; winnerPlayed = false;
 
     zorb.y = height * CFG.robotY;
     zorb.aimX = width * 0.5;
@@ -551,20 +518,19 @@ function onReturnToApp() {
     zorb.recoil = 0;
     zorb.fireCooldown = 0;
 
-    simState = "setup";
+    simState = keepSetupState ? "setup" : simState;
     countdownFrames = 0;
 
-    // Fair IDs randomized
-    let ids = Array.from({length: CFG.playerCount}, (_, i) => i + 1);
+    const count = max(2, CFG.playerCount);
+    let ids = Array.from({length: count}, (_, i) => i + 1);
     shuffleInPlace(ids);
 
-    // True random spawn with spacing attempts (no grid bias)
     const topBound = height * 0.30;
     const minY = height * 0.32;
     const maxY = height - 22;
     const marginX = 18;
 
-    for (let i = 0; i < CFG.playerCount; i++) {
+    for (let i = 0; i < count; i++) {
       const r = random(CFG.bubbleMinR, CFG.bubbleMaxR);
 
       let x = width * 0.5, y = (topBound + height) * 0.5;
@@ -574,7 +540,6 @@ function onReturnToApp() {
         x = random(r + marginX, width - r - marginX);
         y = random(minY + r, maxY - r);
         ok = true;
-
         for (const other of players) {
           const d = dist(x, y, other.x, other.y);
           if (d < r + other.r + 10) { ok = false; break; }
@@ -582,24 +547,21 @@ function onReturnToApp() {
         if (ok) break;
       }
 
-      players.push(new Bubble(ids[i], x, y, r, rosterImgs[i] || null));
+      const handle = rosterHandles[i] || ("#" + ids[i]);
+      players.push(new Bubble(ids[i], handle, x, y, r, rosterImgs[i] || null));
     }
 
     updatePanelStatus();
     updateHud();
   }
 
-  // Robot X hover
   function getRobotX() {
-    const sway = sin(frameCount * CFG.robotSwaySpeedX) * (width *
-CFG.robotSwayFracX);
+    const sway = sin(frameCount * CFG.robotSwaySpeedX) * (width * CFG.robotSwayFracX);
     const x = width * 0.5 + sway;
-    const estHalf = (zorbLoaded && zorbImg) ? (zorbImg.width *
-CFG.robotScale * 0.52) : 120;
+    const estHalf = (zorbLoaded && zorbImg) ? (zorbImg.width * CFG.robotScale * 0.52) : 120;
     return constrain(x, estHalf + 8, width - estHalf - 8);
   }
 
-  // ---------------- MAIN LOOP ----------------
   function draw() {
     if (!paused) step();
     render();
@@ -612,8 +574,7 @@ CFG.robotScale * 0.52) : 120;
 
     for (const b of players) b.update();
     for (let i = 0; i < players.length; i++) {
-      for (let j = i + 1; j < players.length; j++)
-players[i].separate(players[j]);
+      for (let j = i + 1; j < players.length; j++) players[i].separate(players[j]);
     }
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -625,22 +586,15 @@ players[i].separate(players[j]);
       if (particles[i].dead) particles.splice(i, 1);
     }
 
-    // Tension fade
     tensionTarget = (players.length <= 5 && simState === "running") ? 1 : 0;
     tensionVol = lerp(tensionVol, tensionTarget, 0.02);
-    if (audioUnlocked && sfxTension) {
-      sfxTension.setVolume(SFX.master * SFX.tensionMax * tensionVol);
-    }
+    if (audioUnlocked && sfxTension) sfxTension.setVolume(SFX.master * SFX.tensionMax * tensionVol);
 
     if (simState === "countdown") {
       countdownFrames -= 1;
-      if (countdownFrames <= 0) {
-        simState = "running";
-        countdownFrames = 0;
-      }
+      if (countdownFrames <= 0) { simState = "running"; countdownFrames = 0; }
       return;
     }
-
     if (simState !== "running") return;
 
     zorb.fireCooldown -= deltaTime / 1000;
@@ -650,19 +604,15 @@ players[i].separate(players[j]);
       if (players.length <= 2) rate = CFG.fireRateFinal2;
 
       if (players.length <= 5 && frameCount % CFG.slowMoFrames < 10) {
-        // suspense hold
       } else {
         if (zorb.charge <= 0) {
           zorb.charge = CFG.chargeTime;
-
-          // Reload/charge sound at start of charge
           playOne(sfxReload, SFX.reload);
 
           const t = pickTarget();
           zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
           zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
 
-          // Near miss: play woosh
           if (random() < CFG.nearMissChance * CFG.chaos) {
             zorb.aimX += random([-1, 1]) * random(40, 80);
             zorb.aimY += random(20, 60);
@@ -683,16 +633,19 @@ players[i].separate(players[j]);
       if (!winnerPlayed) {
         playOne(sfxWinner, SFX.winner);
         winnerPlayed = true;
+        reportWinnerToBackend(players[0]).catch(()=>{});
       }
     }
   }
 
   function pickTarget() {
-    if (players.length > 12) return random(players);
+    const avoidWinner = BACKEND_WINNER && players.length > 2;
+    const pool = avoidWinner ? players.filter(b => b.handle !== BACKEND_WINNER) : players;
+    if (pool.length === 0) return random(players);
+    if (players.length > 12) return random(pool);
 
-    // Slight bias to center for drama, but still random
-    let best = players[0], bestScore = -1e9;
-    for (const b of players) {
+    let best = pool[0], bestScore = -1e9;
+    for (const b of pool) {
       const centerBias = -dist(b.x, b.y, width*0.5, height*0.62);
       const motion = b.v.mag() * 120;
       const score = centerBias + motion + random(-80, 80);
@@ -718,26 +671,20 @@ players[i].separate(players[j]);
 
   function fireShot() {
     const origin = random(cannonOrigins());
-    const dir = createVector(zorb.aimX - origin.x, zorb.aimY -
-origin.y).normalize();
+    const dir = createVector(zorb.aimX - origin.x, zorb.aimY - origin.y).normalize();
     const speed = CFG.projectileSpeed * (0.85 + 0.3 * CFG.chaos);
     const vel = dir.mult(speed);
 
     const piercing = random() < CFG.multiElimChance * CFG.chaos;
     const ricochet = random() < CFG.ricochetChance * CFG.chaos;
 
-    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y,
-piercing, ricochet));
+    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
 
-    // Fire sound
     playOne(sfxFire, SFX.fire);
-
     zorb.recoil = 1.0;
-    frameShake = max(frameShake, CFG.screenShake * (players.length <=
-5 ? 1.1 : 0.8));
+    frameShake = max(frameShake, CFG.screenShake * (players.length <= 5 ? 1.1 : 0.8));
   }
 
-  // ---------------- RENDER ----------------
   function render() {
     let sx = 0, sy = 0;
     if (frameShake > 0 && !paused) {
@@ -786,20 +733,13 @@ piercing, ricochet));
     const hoverY = sin(frameCount * CFG.robotHoverSpeedY) * CFG.robotHoverAmpY;
     const scaleAmt = CFG.robotScale * (1 + zorb.recoil * 0.01);
 
-    // silhouette glow (blurred copy)
     if (zorbLoaded && zorbImg) {
       push();
       imageMode(CENTER);
       drawingContext.save();
       drawingContext.filter = "blur(22px)";
       tint(255, 0, 200, zorb.charge > 0 ? 180 : 110);
-      image(
-        zorbImg,
-        robotX,
-        zorb.y + hoverY,
-        zorbImg.width * scaleAmt * 1.15,
-        zorbImg.height * scaleAmt * 1.15
-      );
+      image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width * scaleAmt * 1.15, zorbImg.height * scaleAmt * 1.15);
       drawingContext.restore();
       pop();
     }
@@ -808,12 +748,10 @@ piercing, ricochet));
     if (zorbLoaded && zorbImg && zorbImg.width) {
       if (zorb.charge > 0) {
         push(); tint(255,255,255,210);
-        image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width *
-scaleAmt * 1.01, zorbImg.height * scaleAmt * 1.01);
+        image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width * scaleAmt * 1.01, zorbImg.height * scaleAmt * 1.01);
         pop();
       }
-      image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width *
-scaleAmt, zorbImg.height * scaleAmt);
+      image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width * scaleAmt, zorbImg.height * scaleAmt);
     } else {
       push();
       translate(robotX, zorb.y + hoverY);
@@ -825,10 +763,8 @@ scaleAmt, zorbImg.height * scaleAmt);
       pop();
     }
 
-    // cannon glow dots aligned with cannons
     for (const o of cannonOrigins()) {
-      const glow = zorb.charge > 0 ? map(zorb.charge, CFG.chargeTime,
-0, 20, 130) : 18;
+      const glow = zorb.charge > 0 ? map(zorb.charge, CFG.chargeTime, 0, 20, 130) : 18;
       noStroke();
       fill(255, 220, 0, glow);
       circle(o.x, o.y, 14);
@@ -887,7 +823,7 @@ scaleAmt, zorbImg.height * scaleAmt);
 
     fill(255,255,255,220);
     textSize(16);
-    text("Follow + comment to enter tomorrow’s round", cx, height*0.22);
+    text(b.handle ? ("@" + b.handle) : "Winner", cx, height*0.22);
   }
 
   function drawClippedImageCircle(img, x, y, d) {
@@ -907,62 +843,49 @@ scaleAmt, zorbImg.height * scaleAmt);
     ctx.restore();
   }
 
-  // ---------------- ENTITIES ----------------
   class Bubble {
-    constructor(id, x, y, r, img) {
+    constructor(id, handle, x, y, r, img) {
       this.id = id;
+      this.handle = handle || null;
       this.x = x; this.y = y; this.r = r;
       this.img = img;
 
-      this.v = createVector(random(-1, 1), random(-1,
-1)).mult(random(0.6, 1.6));
+      this.v = createVector(random(-1, 1), random(-1,1)).mult(random(0.6, 1.6));
       this.wob = random(TAU);
       this.wobSp = random(0.02, 0.05);
 
-      // Each bubble gets its own swirl direction/strength for fairness/variety
       this.spin = random([-1, 1]) * random(0.8, 1.35);
       this.swirl = random(0.6, 1.4);
     }
 
     update() {
-      // Base wander
       const f = p5.Vector.random2D().mult(CFG.wanderForce * CFG.chaos);
       this.v.add(f);
 
-      // Swirl/orbit around screen center (adds “rotation around” feel)
       const cx = width * 0.5;
       const cy = height * 0.60;
       const toC = createVector(cx - this.x, cy - this.y);
 
-      // Tangent direction (perpendicular) gives orbital motion
-      const tangent = createVector(-toC.y,
-toC.x).normalize().mult(CFG.swirlStrength * this.spin * this.swirl *
-CFG.chaos);
+      const tangent = createVector(-toC.y, toC.x).normalize()
+        .mult(CFG.swirlStrength * this.spin * this.swirl * CFG.chaos);
       this.v.add(tangent);
 
-      // Occasional juke impulse to break patterns
       if (random() < CFG.swirlJukeChance * CFG.chaos) {
-        const j = p5.Vector.random2D().mult(CFG.swirlJukeForce *
-random(0.7, 1.2));
+        const j = p5.Vector.random2D().mult(CFG.swirlJukeForce * random(0.7, 1.2));
         this.v.add(j);
       }
 
-      // Speed clamp
       const maxV = CFG.maxSpeed * (0.85 + 0.35 * CFG.chaos);
       if (this.v.mag() > maxV) this.v.setMag(maxV);
 
-      // Integrate
       this.x += this.v.x;
       this.y += this.v.y;
 
-      // Bounds
       const topBound = height * 0.28;
       if (this.x < this.r) { this.x = this.r; this.v.x *= -1; }
       if (this.x > width - this.r) { this.x = width - this.r; this.v.x *= -1; }
-      if (this.y < topBound + this.r) { this.y = topBound + this.r;
-this.v.y *= -1; }
-      if (this.y > height - this.r) { this.y = height - this.r;
-this.v.y *= -1; }
+      if (this.y < topBound + this.r) { this.y = topBound + this.r; this.v.y *= -1; }
+      if (this.y > height - this.r) { this.y = height - this.r; this.v.y *= -1; }
 
       this.v.mult(CFG.bounceDamping);
       this.wob += this.wobSp;
@@ -990,18 +913,15 @@ this.v.y *= -1; }
       translate(this.x, this.y);
       const wobble = 1 + sin(this.wob) * 0.03;
 
-      // outer glow
       noStroke();
       fill(120, 220, 255, 24);
       circle(0, 0, this.r*2 + CFG.bubbleGlow);
 
-      // rim + glass fill
       stroke(190, 245, 255, 110);
       strokeWeight(3);
       fill(255, 255, 255, 14);
       ellipse(0, 0, this.r*2*wobble, this.r*2*(2-wobble));
 
-      // content
       if (this.img) drawClippedImageCircle(this.img, 0, 2, this.r*1.55);
       else {
         noStroke();
@@ -1011,7 +931,6 @@ this.v.y *= -1; }
         text(this.id, 0, 6);
       }
 
-      // shine
       noStroke();
       fill(255,255,255,55);
       ellipse(-this.r*0.28, -this.r*0.32, this.r*0.85, this.r*0.55);
@@ -1043,13 +962,13 @@ this.v.y *= -1; }
       for (let i = players.length - 1; i >= 0; i--) {
         const b = players[i];
         if (dist(this.x, this.y, b.x, b.y) < b.r + this.r) {
-          // Prevent backend winner from being eliminated
-if (b.handle === BACKEND_WINNER) {
-  continue; // skip removal
-}
+          if (BACKEND_WINNER && b.handle === BACKEND_WINNER && players.length > 1) {
+            this.dead = true;
+            break;
+          }
 
-popBubble(b);
-players.splice(i, 1);
+          popBubble(b);
+          players.splice(i, 1);
 
           if (!this.piercing) {
             this.dead = true;
@@ -1110,10 +1029,8 @@ players.splice(i, 1);
   }
 
   function popBubble(b) {
-    // Pop variety + bass hit for shake moments
     playRandPop();
     playOne(sfxBass, SFX.bass);
-
     frameShake = max(frameShake, CFG.screenShake*(players.length<=5?1.2:1.0));
 
     for (let i = 0; i < CFG.popParticles; i++) {
@@ -1127,39 +1044,54 @@ players.splice(i, 1);
     }
   }
 
-  // ---------------- UI STATUS ----------------
+  async function reportWinnerToBackend(b) {
+    try {
+      await fetch(WINNER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ winner: b.handle || ("#" + b.id), winnerSlot: b.id })
+      });
+    } catch (e) {}
+  }
+
   function updatePanelStatus() {
-    panelRosterEl.textContent = rosterImgs.length ? `Roster:
-${rosterImgs.length} images` : 'Roster: numbers';
+    panelRosterEl.textContent = rosterImgs.length ? `Roster: ${rosterImgs.length} images` : 'Roster: numbers';
+
     panelZorbEl.textContent = zorbLoaded ? 'Zorb: OK' : 'Zorb: missing';
     panelZorbEl.classList.toggle('ok', zorbLoaded);
     panelZorbEl.classList.toggle('warn', !zorbLoaded);
 
-    panelAudioEl.textContent = audioUnlocked ? 'Audio: unlocked' :
-'Audio: locked';
+    panelAudioEl.textContent = audioUnlocked ? 'Audio: unlocked' : 'Audio: locked';
     panelAudioEl.classList.toggle('ok', audioUnlocked);
     panelAudioEl.classList.toggle('warn', !audioUnlocked);
 
-    if (rosterImgs.length) enableStart(true);
-    else enableStart(false);
+    panelBackendEl.textContent = BACKEND_OK ? `Backend: OK (${CFG.playerCount})` : `Backend: offline`;
+    panelBackendEl.classList.toggle('ok', BACKEND_OK);
+    panelBackendEl.classList.toggle('bad', !BACKEND_OK);
+
+    enableStart(true);
   }
 
   function updateHud() {
-    const roster = rosterImgs.length ? `${rosterImgs.length} img` : `numbers`;
     const z = zorbLoaded ? `ok` : `MISSING Zorb2.PNG`;
     const a = audioUnlocked ? `unlocked` : `locked`;
-    const state = (simState === "setup") ? "SETUP" : (simState ===
-"countdown") ? "COUNTDOWN" : (simState === "running") ? "RUNNING" :
-"FINISH";
-    const cd = (simState === "countdown") ? ` • starts in
-${ceil(countdownFrames/60)}s` : '';
+    const state = (simState === "setup") ? "SETUP" : (simState === "countdown") ? "COUNTDOWN" : (simState === "running") ? "RUNNING" : "FINISH";
+    const cd = (simState === "countdown") ? ` • starts in ${ceil(countdownFrames/60)}s` : '';
+    const rd = ROUND_META?.round_date ? ` • ${ROUND_META.round_date}` : '';
+    const mode = ROUND_META?.mode ? ` • ${ROUND_META.mode}` : '';
+    const backend = BACKEND_OK ? ` • backend OK` : ` • backend offline`;
+    const roster = rosterImgs.length ? `${rosterImgs.length} img` : `numbers`;
+
     hudStatusEl.innerHTML =
-      `State: <b>${state}</b> • Zorb: <b>${z}</b> • Audio: <b>${a}</b>
-• Roster: <b>${roster}</b> • Remaining: <b>${players.length}</b> •
-Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
+      `State: <b>${state}</b>${rd}${mode}${backend} • Zorb: <b>${z}</b> • Audio: <b>${a}</b>` +
+      ` • Roster: <b>${roster}</b> • Players: <b>${CFG.playerCount}</b> • Remaining: <b>${players.length}</b> • Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
       (paused ? ` • <b>PAUSED</b>` : ``);
+
     updatePanelStatus();
   }
+  </script>
+</body>
+</html>
 
   </script>
 </body>
