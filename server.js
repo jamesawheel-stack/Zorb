@@ -12,15 +12,14 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim();
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
 const ADMIN_KEY = (process.env.ADMIN_KEY || "").trim();
-const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // e.g. https://username.github.io
+const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // https://jamesawheel-stack.github.io
 
 // IG (optional)
 const IG_ACCESS_TOKEN = (process.env.IG_ACCESS_TOKEN || "").trim();
 const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase();
 
-// Counts
-const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap
-const FINALE_COUNT_DEFAULT = Number(process.env.FINALE_COUNT_DEFAULT || 50); // finale target
+// Counts (ONLY these)
+const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap (2..100)
 const MIN_PLAYERS = 2;
 
 // ---------------- SUPABASE ----------------
@@ -37,33 +36,17 @@ app.use((req, res, next) => {
   if (GAME_ORIGIN) {
     res.setHeader("Access-Control-Allow-Origin", GAME_ORIGIN);
     res.setHeader("Vary", "Origin");
-  } else {
-    // If you want to test from anywhere temporarily, uncomment:
-    // res.setHeader("Access-Control-Allow-Origin", "*");
   }
-
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, x-admin-key"
-  );
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-key");
 
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
 
+// ---------------- HELPERS ----------------
 function todayIdUTC() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-}
-
-// ---------------- UTILS ----------------
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
 }
 
 function randSeed() {
@@ -74,6 +57,15 @@ function clampInt(n, min, max) {
   const x = Number(n);
   if (!Number.isFinite(x)) return min;
   return Math.max(min, Math.min(max, Math.floor(x)));
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 function qualifies(text = "") {
@@ -88,14 +80,6 @@ function requireAdmin(req) {
 
 function safeStr(s, maxLen = 80) {
   return (s ?? "").toString().slice(0, maxLen);
-}
-
-// Deterministic winner from seed
-function pickWinnerSlot(seed, playerCount) {
-  // simple deterministic pseudo-random based on seed
-  const x = Math.sin(seed) * 10000;
-  const frac = x - Math.floor(x);
-  return Math.floor(frac * playerCount) + 1;
 }
 
 // ---------------- IG HELPERS (optional) ----------------
@@ -149,6 +133,7 @@ function buildTrainingPlayers(count) {
   }));
 }
 
+// Dedupes multiple comments from same account
 function buildLivePlayersFromComments(comments, cap) {
   const seen = new Set();
   const uniq = [];
@@ -164,22 +149,25 @@ function buildLivePlayersFromComments(comments, cap) {
 
     seen.add(key);
     uniq.push({
-      username,
-      text: c.text || "",
+      handle: username,
+      source: "comment",
       comment_id: c.id || null,
-      timestamp: c.timestamp || null,
+      comment_text: c.text || "",
+      comment_ts: c.timestamp || null,
     });
   }
 
   const picked = shuffle(uniq).slice(0, cap);
-  return picked.map((c, i) => ({
+
+  // add slots + consistent schema
+  return picked.map((p, i) => ({
     slot: i + 1,
-    handle: c.username,
-    img: null, // profile pics are not reliably available via Basic Display
-    source: "comment",
-    comment_id: c.comment_id,
-    comment_text: c.text,
-    comment_ts: c.timestamp,
+    handle: p.handle,
+    img: null,
+    source: p.source,
+    comment_id: p.comment_id,
+    comment_text: p.comment_text,
+    comment_ts: p.comment_ts,
   }));
 }
 
@@ -204,8 +192,8 @@ async function getTodayRound() {
 }
 
 // ---------------- ROUND GENERATION ----------------
-async function generateRound() {
-  const round_date = todayId();
+async function generateRound({ requestedMaxPlayers } = {}) {
+  const round_date = todayIdUTC();
   const seed = randSeed();
 
   let mode = "training";
@@ -213,128 +201,69 @@ async function generateRound() {
   let players = [];
   let claimed_total = 0;
 
+  // If caller passes ?max=72, use it as the training size and as a *cap*
+  const cap = clampInt(
+    requestedMaxPlayers ?? PLAYER_COUNT_MAX,
+    MIN_PLAYERS,
+    PLAYER_COUNT_MAX
+  );
+
   // -------- TRY LIVE MODE --------
   if (IG_ACCESS_TOKEN) {
     try {
       const latest = await getLatestMedia();
-
       if (latest?.id) {
         post = latest;
 
         const comments = await getComments(latest.id);
+        const livePlayers = buildLivePlayersFromComments(comments, PLAYER_COUNT_MAX);
 
-        // Deduplicate by username
-        const seen = new Set();
-        const unique = [];
-
-        for (const c of comments) {
-          const username = (c.username || "").trim();
-          if (!username) continue;
-
-          const key = username.toLowerCase();
-          if (seen.has(key)) continue;
-          if (!qualifies(c.text)) continue;
-
-          seen.add(key);
-          unique.push({
-            handle: username,
-            source: "comment"
-          });
-        }
-
-        claimed_total = unique.length;
+        claimed_total = livePlayers.length;
 
         if (claimed_total >= MIN_PLAYERS) {
           mode = "live";
 
-          // Deterministic shuffle
-          const shuffled = shuffle(unique);
+          // NEW FINALE LOGIC: dynamic 2..PLAYER_COUNT_MAX, but also respect ?max=
+          const finale_count = clampInt(Math.min(claimed_total, cap), MIN_PLAYERS, PLAYER_COUNT_MAX);
 
-          const finale_count = Math.max(
-            MIN_PLAYERS,
-            Math.min(claimed_total, PLAYER_COUNT_MAX)
-          );
-
-          players = shuffled.slice(0, finale_count);
-
-        } else {
-          mode = "training";
+          players = livePlayers.slice(0, finale_count);
         }
       }
     } catch (err) {
-      // Fail gracefully into training mode
+      // Fail gracefully into training
       mode = "training";
     }
   }
 
   // -------- TRAINING FALLBACK --------
-  if (mode === "training") {
-    claimed_total = Math.max(MIN_PLAYERS, FINALE_COUNT_DEFAULT);
+  if (mode !== "live") {
+    mode = "training";
+    claimed_total = cap;
 
-    players = [];
-    for (let i = 0; i < claimed_total; i++) {
-      players.push({
-        handle: `#${i + 1}`,
-        source: "training"
-      });
-    }
+    // NEW FINALE LOGIC: dynamic 2..PLAYER_COUNT_MAX
+    const finale_count = clampInt(claimed_total, MIN_PLAYERS, PLAYER_COUNT_MAX);
+
+    players = buildTrainingPlayers(finale_count);
   }
 
-  // -------- FINALIZE FINALE COUNT --------
-  const finale_count = Math.max(
-    MIN_PLAYERS,
-    Math.min(claimed_total, PLAYER_COUNT_MAX)
-  );
-
-  players = players.slice(0, finale_count);
-
-const winner_slot = pickWinnerSlot(seed, players.length);
-const winner_player = players.find(p => p.slot === winner_slot);
-
-const row = {
-  round_date,
-  mode,
-  status: "pending",
-  claimed_total,
-  finale_count,
-  seed,
-  post,     // jsonb
-  players,  // jsonb
-  winner_slot,
-  winner: winner_player?.handle || null,
-  winner_set_at: null,
-};
-  
-  // Add slot numbering
-  players = players.map((p, i) => ({
-    slot: i + 1,
-    handle: p.handle,
-    img: null,
-    source: p.source
-  }));
+  // Ensure finale_count matches actual players array length
+  const finale_count = clampInt(players.length, MIN_PLAYERS, PLAYER_COUNT_MAX);
 
   const row = {
     round_date,
     mode,
-    status: "ready",
-    claimed_total,
-    finale_count,
+    status: "ready",          // ready for the game to run
+    claimed_total,            // total eligible (deduped) for the round
+    finale_count,             // dynamic finale (2..100) based on claimed_total
     seed,
-    post,
-    players,
-    winner,
-    winner_slot: winnerIndex + 1,
-    winner_set_at: null
+    post,                     // jsonb nullable
+    players,                  // jsonb array
+    winner: null,             // set by the game
+    winner_slot: null,        // set by the game
+    winner_set_at: null,      // set by the game
   };
 
-  const { error } = await supabase
-    .from("rounds")
-    .upsert(row, { onConflict: "round_date" });
-
-  if (error) {
-    throw new Error(`Supabase upsert failed: ${error.message}`);
-  }
-
+  await upsertRound(row);
   return row;
 }
 
@@ -353,7 +282,7 @@ app.get("/api/envcheck", (req, res) => {
     hasIgAccessToken: !!IG_ACCESS_TOKEN,
     requireKeyword: REQUIRE_KEYWORD || null,
     playerCountMax: PLAYER_COUNT_MAX,
-    finaleDefault: FINALE_COUNT_DEFAULT,
+    minPlayers: MIN_PLAYERS,
     gameOrigin: GAME_ORIGIN || null,
   });
 });
@@ -363,6 +292,7 @@ app.get("/admin", (req, res) => {
   res.send(`
     <h2>Zorbblez Admin</h2>
     <p>Generate today’s round (live if possible, else training).</p>
+    <p>Optional test size: <code>/admin/generate?max=72</code></p>
     <input id="key" placeholder="Admin Key" style="width:340px;padding:6px;" />
     <button onclick="gen()" style="padding:6px 10px;">Generate</button>
     <pre id="out" style="white-space:pre-wrap;"></pre>
@@ -384,7 +314,6 @@ app.post("/admin/generate", async (req, res) => {
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
-  // optional override: /admin/generate?max=72
   const requestedMaxPlayers = req.query?.max;
 
   try {
@@ -395,13 +324,12 @@ app.post("/admin/generate", async (req, res) => {
   }
 });
 
-// Game reads today’s round (name kept for compatibility)
+// Game reads today’s round (kept name for compatibility)
 app.get("/top50.json", async (req, res) => {
   try {
     let round = await getTodayRound();
     if (!round) {
-      // auto-generate if not created yet
-      round = await generateRound();
+      round = await generateRound(); // auto-generate if missing
     }
     res.json(round);
   } catch (e) {
@@ -421,7 +349,7 @@ app.post("/round/today/winner", async (req, res) => {
       : null;
 
     const { error } = await supabase
-      .from("rounds") // ✅ FIXED: rounds table only
+      .from("rounds")
       .update({
         status: "complete",
         winner: winner || null,
@@ -430,9 +358,7 @@ app.post("/round/today/winner", async (req, res) => {
       })
       .eq("round_date", round_date);
 
-    if (error) {
-      return res.status(500).json({ ok: false, error: error.message });
-    }
+    if (error) return res.status(500).json({ ok: false, error: error.message });
 
     res.json({ ok: true });
   } catch (e) {
