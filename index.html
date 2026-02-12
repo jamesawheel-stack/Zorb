@@ -397,7 +397,9 @@
     const cols = 5, rows = 10;
     const cellW = width / cols;
     const cellH = areaH / rows;
-
+    let ids = Array.from({length: CFG.playerCount}, (_, i) => i + 1);
+    shuffleInPlace(ids);
+    
     for (let i = 0; i < CFG.playerCount; i++) {
       const r = random(CFG.bubbleMinR, CFG.bubbleMaxR);
       const cx = (i % cols) * cellW + cellW * 0.5;
@@ -406,7 +408,7 @@
       const x = constrain(cx + random(-cellW*0.25, cellW*0.25), r + 12, width - r - 12);
       const y = constrain(cy + random(-cellH*0.25, cellH*0.25), topBound + r + 8, height - r - 14);
 
-      players.push(new Bubble(i + 1, x, y, r, rosterImgs[i] || null));
+      players.push(new Bubble(ids[i], x, y, r, rosterImgs[i] || null));
     }
 
     updatePanelStatus();
