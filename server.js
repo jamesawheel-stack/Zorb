@@ -2,6 +2,15 @@ import express from "express";
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 
+app.get("/api/envcheck", (req, res) => {
+  res.json({
+    ok: true,
+    hasSupabaseUrl: !!process.env.SUPABASE_URL,
+    hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    serviceRoleKeyStartsWith: (process.env.SUPABASE_SERVICE_ROLE_KEY || "").slice(0, 6),
+  });
+});
+
 const app = express();
 app.use(express.json());
 
