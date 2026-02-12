@@ -2,6 +2,9 @@ import express from "express";
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 
+const app = express();
+app.use(express.json());
+
 app.get("/api/envcheck", (req, res) => {
   res.json({
     ok: true,
@@ -11,8 +14,6 @@ app.get("/api/envcheck", (req, res) => {
   });
 });
 
-const app = express();
-app.use(express.json());
 
 /**
  * =========================
