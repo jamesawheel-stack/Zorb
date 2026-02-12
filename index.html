@@ -1043,8 +1043,13 @@ this.v.y *= -1; }
       for (let i = players.length - 1; i >= 0; i--) {
         const b = players[i];
         if (dist(this.x, this.y, b.x, b.y) < b.r + this.r) {
-          popBubble(b);
-          players.splice(i, 1);
+          // Prevent backend winner from being eliminated
+if (b.handle === BACKEND_WINNER) {
+  continue; // skip removal
+}
+
+popBubble(b);
+players.splice(i, 1);
 
           if (!this.piercing) {
             this.dead = true;
