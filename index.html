@@ -248,7 +248,7 @@ auto-hide in ~2s for clean screen recording.</div>
   let players = [], projectiles = [], particles = [], stars = [];
   let paused = false, frameShake = 0;
   let zorb = { y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0 };
-
+  let BACKEND_WINNER = null;
   let simState = "setup"; // setup | countdown | running | finished
   let countdownFrames = 0;
 
