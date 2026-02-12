@@ -53,22 +53,57 @@ function qualifies(text = "") {
 
 // Get latest IG post
 async function getLatestMedia() {
-  const url = `https://graph.facebook.com/v20.0/${IG_USER_ID}/media?fields=id,permalink,timestamp&limit=5&access_token=${ACCESS_TOKEN}`;
+  const url =
+    `https://graph.instagram.com/me/media` +
+    `?fields=id,permalink,timestamp,caption` +
+    `&limit=10` +
+    `&access_token=${ACCESS_TOKEN}`;
+
   const res = await fetch(url);
   const data = await res.json();
+
+  if (!res.ok || data.error) {
+    const msg = data?.error?.message || JSON.stringify(data);
+    throw new Error(`IG media fetch failed: ${msg}`);
+  }
+
+  if (!Array.isArray(data.data) || data.data.length === 0) {
+    throw new Error("IG media fetch returned no posts.");
+  }
+
+  // Newest first (safe)
+  data.data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   return data.data[0];
 }
 
+
 // Get comments
 async function getComments(mediaId) {
-  let url = `https://graph.facebook.com/v20.0/${mediaId}/comments?fields=username,text&limit=100&access_token=${ACCESS_TOKEN}`;
+  // Instagram Basic display / graph.instagram.com supports comments for IG Professional
+  // Endpoint:
+  // https://graph.instagram.com/{media-id}/comments?fields=id,username,text,timestamp
+
+  let url =
+    `https://graph.instagram.com/${mediaId}/comments` +
+    `?fields=id,username,text,timestamp` +
+    `&limit=50` +
+    `&access_token=${ACCESS_TOKEN}`;
+
   let all = [];
+
   while (url) {
     const res = await fetch(url);
     const data = await res.json();
+
+    if (!res.ok || data.error) {
+      const msg = data?.error?.message || JSON.stringify(data);
+      throw new Error(`IG comments fetch failed: ${msg}`);
+    }
+
     all.push(...(data.data || []));
-    url = data.paging?.next || null;
+    url = data.paging?.next || null; // pagination supported if present
   }
+
   return all;
 }
 
