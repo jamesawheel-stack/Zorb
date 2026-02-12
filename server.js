@@ -52,6 +52,10 @@ app.use((req, res, next) => {
   next();
 });
 
+function todayIdUTC() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+}
+
 // ---------------- UTILS ----------------
 function shuffle(arr) {
   const a = [...arr];
@@ -60,10 +64,6 @@ function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
-}
-
-function todayIdUTC() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
 }
 
 function randSeed() {
