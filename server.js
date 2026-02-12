@@ -90,6 +90,14 @@ function safeStr(s, maxLen = 80) {
   return (s ?? "").toString().slice(0, maxLen);
 }
 
+// Deterministic winner from seed
+function pickWinnerSlot(seed, playerCount) {
+  // simple deterministic pseudo-random based on seed
+  const x = Math.sin(seed) * 10000;
+  const frac = x - Math.floor(x);
+  return Math.floor(frac * playerCount) + 1;
+}
+
 // ---------------- IG HELPERS (optional) ----------------
 async function igFetchJson(url) {
   const res = await fetch(url);
@@ -280,10 +288,25 @@ async function generateRound() {
 
   players = players.slice(0, finale_count);
 
-  // -------- DETERMINISTIC WINNER --------
-  const winnerIndex = seed % finale_count;
-  const winner = players[winnerIndex].handle;
+const seed = randSeed();
 
+const winner_slot = pickWinnerSlot(seed, players.length);
+const winner_player = players.find(p => p.slot === winner_slot);
+
+const row = {
+  round_date,
+  mode,
+  status: "pending",
+  claimed_total,
+  finale_count,
+  seed,
+  post,     // jsonb
+  players,  // jsonb
+  winner_slot,
+  winner: winner_player?.handle || null,
+  winner_set_at: null,
+};
+  
   // Add slot numbering
   players = players.map((p, i) => ({
     slot: i + 1,
