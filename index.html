@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="viewport"
+content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
+/>
   <title>Zorbblez – Mobile Full v4 (Audio + Fair Motion)</title>
   <style>
     :root {
@@ -16,12 +18,14 @@
       --good: rgba(120,255,170,0.92);
       --warn: rgba(255,210,120,0.92);
     }
-    html, body { margin:0; padding:0; background:var(--bg); overflow:hidden; height:100%; }
+    html, body { margin:0; padding:0; background:var(--bg);
+overflow:hidden; height:100%; }
     canvas { display:block; margin:0 auto; touch-action:none; }
 
     #hud {
       position: fixed; left: 12px; top: 12px; z-index: 10;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+sans-serif;
       color: var(--text); font-size: 12px; line-height: 1.25;
       background: var(--panel); border: 1px solid var(--stroke);
       padding: 10px 12px; border-radius: 12px; backdrop-filter: blur(10px);
@@ -33,7 +37,8 @@
     #panel {
       position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
       z-index: 30;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+sans-serif;
       background: var(--panel2); border: 1px solid rgba(255,255,255,0.18);
       padding: 18px 18px 14px; border-radius: 16px;
       color: var(--text);
@@ -42,12 +47,16 @@
       backdrop-filter: blur(12px);
     }
     #panel h1 { font-size: 18px; margin: 0 0 10px; }
-    #panel p { margin: 8px 0; font-size: 12px; opacity: 0.92; line-height: 1.35; }
+    #panel p { margin: 8px 0; font-size: 12px; opacity: 0.92;
+line-height: 1.35; }
     #panel input { display:none; }
-    #panel .row { display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; margin-top:10px; }
+    #panel .row { display:flex; gap:10px; justify-content:center;
+align-items:center; flex-wrap:wrap; margin-top:10px; }
     #panel .note { font-size:11px; opacity:0.75; margin-top:10px; }
     #panel .status { margin-top: 10px; font-size: 12px; opacity:0.95; }
-    #panel .pill { display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.08); }
+    #panel .pill { display:inline-block; padding:6px 10px;
+border-radius:999px; border:1px solid rgba(255,255,255,0.16);
+background: rgba(255,255,255,0.08); }
     #panel .ok { color: var(--good); }
     #panel .warn { color: var(--warn); }
 
@@ -71,20 +80,23 @@
       padding: 10px 12px;
       border-radius: 14px;
       font-size: 13px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+sans-serif;
       cursor: pointer;
       min-width: 64px;
     }
     .btn:active { transform: translateY(1px); background: var(--btnHover); }
     .btn.small { min-width: 52px; padding: 10px 10px; }
     .btn.wide { min-width: 110px; }
-    .btn.primary { border-color: rgba(120,255,170,0.35); background: rgba(120,255,170,0.12); }
+    .btn.primary { border-color: rgba(120,255,170,0.35); background:
+rgba(120,255,170,0.12); }
     .hidden { display:none !important; }
 
     #toast {
       position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
       z-index: 40;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+sans-serif;
       font-size: 12px;
       color: var(--text);
       background: rgba(0,0,0,0.55);
@@ -105,12 +117,14 @@
   <div id="hud">
     <b>Zorbblez – Top 50</b>
     <div id="hudStatus">Loading…</div>
-    <div class="tiny">Tap background: pause/resume • Tap anywhere when UI hidden: show UI</div>
+    <div class="tiny">Tap background: pause/resume • Tap anywhere when
+UI hidden: show UI</div>
   </div>
 
   <div id="panel">
     <h1>Load today’s Top 50</h1>
-    <p>Select up to <b>50</b> profile images. Then press <b>Start</b> to begin the countdown.</p>
+    <p>Select up to <b>50</b> profile images. Then press <b>Start</b>
+to begin the countdown.</p>
 
     <div class="row">
       <label class="btn wide" style="display:inline-block;">
@@ -118,11 +132,13 @@
         <input id="fileInput" type="file" accept="image/*" multiple />
       </label>
 
-      <button class="btn wide" id="startNumbers" type="button">Start with numbers</button>
+      <button class="btn wide" id="startNumbers" type="button">Start
+with numbers</button>
     </div>
 
     <div class="row">
-      <button class="btn wide primary" id="startBtn" type="button" disabled>Start</button>
+      <button class="btn wide primary" id="startBtn" type="button"
+disabled>Start</button>
       <button class="btn wide" id="clearBtn" type="button">Clear</button>
     </div>
 
@@ -132,7 +148,8 @@
       <span class="pill" id="panelAudio">Audio: locked</span>
     </div>
 
-    <div class="note">Tip: after you press Start, the UI will auto-hide in ~2s for clean screen recording.</div>
+    <div class="note">Tip: after you press Start, the UI will
+auto-hide in ~2s for clean screen recording.</div>
   </div>
 
   <div id="controls">
@@ -281,7 +298,8 @@
 
     stars = [];
     for (let i = 0; i < 120; i++) {
-      stars.push({ x: random(width), y: random(height), r: random(0.8, 2.2), tw: random(TAU), sp: random(0.006, 0.02) });
+      stars.push({ x: random(width), y: random(height), r: random(0.8,
+2.2), tw: random(TAU), sp: random(0.006, 0.02) });
     }
   }
 
@@ -298,12 +316,18 @@
     panelAudioEl  = document.getElementById('panelAudio');
     startBtnEl    = document.getElementById('startBtn');
 
-    document.getElementById('btnShowPanel').addEventListener('click', () => { showPanel(true); showUI(true); });
-    document.getElementById('btnPause').addEventListener('click', () => { togglePause(); bumpUI(); });
-    document.getElementById('btnRestart').addEventListener('click', () => { resetSim(false); showUI(true); showPanel(true); });
-    document.getElementById('btnChaosDown').addEventListener('click', () => { CFG.chaos = max(0.35, CFG.chaos - 0.15); bumpUI(); });
-    document.getElementById('btnChaosUp').addEventListener('click', () => { CFG.chaos = min(3.0, CFG.chaos + 0.15); bumpUI(); });
-    document.getElementById('btnHide').addEventListener('click', () => { setUIHidden(true); });
+    document.getElementById('btnShowPanel').addEventListener('click',
+() => { showPanel(true); showUI(true); });
+    document.getElementById('btnPause').addEventListener('click', ()
+=> { togglePause(); bumpUI(); });
+    document.getElementById('btnRestart').addEventListener('click', ()
+=> { resetSim(false); showUI(true); showPanel(true); });
+    document.getElementById('btnChaosDown').addEventListener('click',
+() => { CFG.chaos = max(0.35, CFG.chaos - 0.15); bumpUI(); });
+    document.getElementById('btnChaosUp').addEventListener('click', ()
+=> { CFG.chaos = min(3.0, CFG.chaos + 0.15); bumpUI(); });
+    document.getElementById('btnHide').addEventListener('click', () =>
+{ setUIHidden(true); });
 
     document.getElementById('startNumbers').addEventListener('click', () => {
       rosterImgs = [];
@@ -351,7 +375,8 @@ window.addEventListener('pageshow', () => onReturnToApp()); // bfcache restore
 window.addEventListener('focus', () => onReturnToApp());
 
 // Also try to resume audio on any touch/click after return
-document.addEventListener('touchstart', () => resumeAudioNow(), { passive: true });
+document.addEventListener('touchstart', () => resumeAudioNow(), {
+passive: true });
 document.body.addEventListener('click', (e) => {
   resumeAudioNow();
 
@@ -378,7 +403,8 @@ document.body.addEventListener('click', (e) => {
     // Prevent UI taps from toggling pause
     for (const el of document.querySelectorAll('button, label.btn')) {
       el.addEventListener('click', (ev) => ev.stopPropagation());
-      el.addEventListener('touchstart', (ev) => ev.stopPropagation(), { passive: true });
+      el.addEventListener('touchstart', (ev) => ev.stopPropagation(),
+{ passive: true });
     }
 
     showPanel(true);
@@ -565,9 +591,11 @@ function onReturnToApp() {
 
   // Robot X hover
   function getRobotX() {
-    const sway = sin(frameCount * CFG.robotSwaySpeedX) * (width * CFG.robotSwayFracX);
+    const sway = sin(frameCount * CFG.robotSwaySpeedX) * (width *
+CFG.robotSwayFracX);
     const x = width * 0.5 + sway;
-    const estHalf = (zorbLoaded && zorbImg) ? (zorbImg.width * CFG.robotScale * 0.52) : 120;
+    const estHalf = (zorbLoaded && zorbImg) ? (zorbImg.width *
+CFG.robotScale * 0.52) : 120;
     return constrain(x, estHalf + 8, width - estHalf - 8);
   }
 
@@ -584,7 +612,8 @@ function onReturnToApp() {
 
     for (const b of players) b.update();
     for (let i = 0; i < players.length; i++) {
-      for (let j = i + 1; j < players.length; j++) players[i].separate(players[j]);
+      for (let j = i + 1; j < players.length; j++)
+players[i].separate(players[j]);
     }
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -689,20 +718,23 @@ function onReturnToApp() {
 
   function fireShot() {
     const origin = random(cannonOrigins());
-    const dir = createVector(zorb.aimX - origin.x, zorb.aimY - origin.y).normalize();
+    const dir = createVector(zorb.aimX - origin.x, zorb.aimY -
+origin.y).normalize();
     const speed = CFG.projectileSpeed * (0.85 + 0.3 * CFG.chaos);
     const vel = dir.mult(speed);
 
     const piercing = random() < CFG.multiElimChance * CFG.chaos;
     const ricochet = random() < CFG.ricochetChance * CFG.chaos;
 
-    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
+    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y,
+piercing, ricochet));
 
     // Fire sound
     playOne(sfxFire, SFX.fire);
 
     zorb.recoil = 1.0;
-    frameShake = max(frameShake, CFG.screenShake * (players.length <= 5 ? 1.1 : 0.8));
+    frameShake = max(frameShake, CFG.screenShake * (players.length <=
+5 ? 1.1 : 0.8));
   }
 
   // ---------------- RENDER ----------------
@@ -776,10 +808,12 @@ function onReturnToApp() {
     if (zorbLoaded && zorbImg && zorbImg.width) {
       if (zorb.charge > 0) {
         push(); tint(255,255,255,210);
-        image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width * scaleAmt * 1.01, zorbImg.height * scaleAmt * 1.01);
+        image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width *
+scaleAmt * 1.01, zorbImg.height * scaleAmt * 1.01);
         pop();
       }
-      image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width * scaleAmt, zorbImg.height * scaleAmt);
+      image(zorbImg, robotX, zorb.y + hoverY, zorbImg.width *
+scaleAmt, zorbImg.height * scaleAmt);
     } else {
       push();
       translate(robotX, zorb.y + hoverY);
@@ -793,7 +827,8 @@ function onReturnToApp() {
 
     // cannon glow dots aligned with cannons
     for (const o of cannonOrigins()) {
-      const glow = zorb.charge > 0 ? map(zorb.charge, CFG.chargeTime, 0, 20, 130) : 18;
+      const glow = zorb.charge > 0 ? map(zorb.charge, CFG.chargeTime,
+0, 20, 130) : 18;
       noStroke();
       fill(255, 220, 0, glow);
       circle(o.x, o.y, 14);
@@ -879,7 +914,8 @@ function onReturnToApp() {
       this.x = x; this.y = y; this.r = r;
       this.img = img;
 
-      this.v = createVector(random(-1, 1), random(-1, 1)).mult(random(0.6, 1.6));
+      this.v = createVector(random(-1, 1), random(-1,
+1)).mult(random(0.6, 1.6));
       this.wob = random(TAU);
       this.wobSp = random(0.02, 0.05);
 
@@ -899,12 +935,15 @@ function onReturnToApp() {
       const toC = createVector(cx - this.x, cy - this.y);
 
       // Tangent direction (perpendicular) gives orbital motion
-      const tangent = createVector(-toC.y, toC.x).normalize().mult(CFG.swirlStrength * this.spin * this.swirl * CFG.chaos);
+      const tangent = createVector(-toC.y,
+toC.x).normalize().mult(CFG.swirlStrength * this.spin * this.swirl *
+CFG.chaos);
       this.v.add(tangent);
 
       // Occasional juke impulse to break patterns
       if (random() < CFG.swirlJukeChance * CFG.chaos) {
-        const j = p5.Vector.random2D().mult(CFG.swirlJukeForce * random(0.7, 1.2));
+        const j = p5.Vector.random2D().mult(CFG.swirlJukeForce *
+random(0.7, 1.2));
         this.v.add(j);
       }
 
@@ -920,8 +959,10 @@ function onReturnToApp() {
       const topBound = height * 0.28;
       if (this.x < this.r) { this.x = this.r; this.v.x *= -1; }
       if (this.x > width - this.r) { this.x = width - this.r; this.v.x *= -1; }
-      if (this.y < topBound + this.r) { this.y = topBound + this.r; this.v.y *= -1; }
-      if (this.y > height - this.r) { this.y = height - this.r; this.v.y *= -1; }
+      if (this.y < topBound + this.r) { this.y = topBound + this.r;
+this.v.y *= -1; }
+      if (this.y > height - this.r) { this.y = height - this.r;
+this.v.y *= -1; }
 
       this.v.mult(CFG.bounceDamping);
       this.wob += this.wobSp;
@@ -1083,12 +1124,14 @@ function onReturnToApp() {
 
   // ---------------- UI STATUS ----------------
   function updatePanelStatus() {
-    panelRosterEl.textContent = rosterImgs.length ? `Roster: ${rosterImgs.length} images` : 'Roster: numbers';
+    panelRosterEl.textContent = rosterImgs.length ? `Roster:
+${rosterImgs.length} images` : 'Roster: numbers';
     panelZorbEl.textContent = zorbLoaded ? 'Zorb: OK' : 'Zorb: missing';
     panelZorbEl.classList.toggle('ok', zorbLoaded);
     panelZorbEl.classList.toggle('warn', !zorbLoaded);
 
-    panelAudioEl.textContent = audioUnlocked ? 'Audio: unlocked' : 'Audio: locked';
+    panelAudioEl.textContent = audioUnlocked ? 'Audio: unlocked' :
+'Audio: locked';
     panelAudioEl.classList.toggle('ok', audioUnlocked);
     panelAudioEl.classList.toggle('warn', !audioUnlocked);
 
@@ -1100,10 +1143,15 @@ function onReturnToApp() {
     const roster = rosterImgs.length ? `${rosterImgs.length} img` : `numbers`;
     const z = zorbLoaded ? `ok` : `MISSING Zorb2.PNG`;
     const a = audioUnlocked ? `unlocked` : `locked`;
-    const state = (simState === "setup") ? "SETUP" : (simState === "countdown") ? "COUNTDOWN" : (simState === "running") ? "RUNNING" : "FINISH";
-    const cd = (simState === "countdown") ? ` • starts in ${ceil(countdownFrames/60)}s` : '';
+    const state = (simState === "setup") ? "SETUP" : (simState ===
+"countdown") ? "COUNTDOWN" : (simState === "running") ? "RUNNING" :
+"FINISH";
+    const cd = (simState === "countdown") ? ` • starts in
+${ceil(countdownFrames/60)}s` : '';
     hudStatusEl.innerHTML =
-      `State: <b>${state}</b> • Zorb: <b>${z}</b> • Audio: <b>${a}</b> • Roster: <b>${roster}</b> • Remaining: <b>${players.length}</b> • Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
+      `State: <b>${state}</b> • Zorb: <b>${z}</b> • Audio: <b>${a}</b>
+• Roster: <b>${roster}</b> • Remaining: <b>${players.length}</b> •
+Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
       (paused ? ` • <b>PAUSED</b>` : ``);
     updatePanelStatus();
   }
