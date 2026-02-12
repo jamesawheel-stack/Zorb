@@ -343,6 +343,23 @@
       resetSim(true);
       enableStart(true);
       updatePanelStatus();
+      // Auto-resume when returning to the app/tab (iOS/Safari)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') onReturnToApp();
+});
+window.addEventListener('pageshow', () => onReturnToApp()); // bfcache restore
+window.addEventListener('focus', () => onReturnToApp());
+
+// Also try to resume audio on any touch/click after return
+document.addEventListener('touchstart', () => resumeAudioNow(), { passive: true });
+document.body.addEventListener('click', (e) => {
+  resumeAudioNow();
+
+  if (!panelEl.classList.contains('hidden')) return;
+  if (uiHidden) { showUI(true); bumpUI(); return; }
+  togglePause();
+  bumpUI();
+}, { passive: true });
       showPanel(true);
       showUI(true);
       bumpUI();
@@ -435,6 +452,7 @@
     if (audioUnlocked) return;
     userStartAudio();
     audioUnlocked = true;
+    resumeAudioNow();
 
     // Start tension loop silent; we'll fade it in at final 5
     if (sfxTension) {
@@ -458,6 +476,41 @@
     snd.setVolume(SFX.master * SFX.pop);
     snd.play();
   }
+  function resumeAudioNow() {
+  if (!audioUnlocked) return;
+
+  // Resume AudioContext if iOS suspended it
+  const ctx = getAudioContext?.();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume();
+  }
+
+  // Ensure tension loop is alive after app switching
+  if (sfxTension) {
+    try {
+      if (!sfxTension.isPlaying()) {
+        sfxTension.setLoop(true);
+        sfxTension.play();
+      }
+      sfxTension.setVolume(SFX.master * SFX.tensionMax * tensionVol);
+    } catch (e) {}
+  }
+}
+
+function onReturnToApp() {
+  // Never stay paused after returning
+  paused = false;
+
+  // Try to bring audio back automatically
+  resumeAudioNow();
+
+  // If iOS still blocks audio, show UI so one tap fixes it
+  const ctx = getAudioContext?.();
+  if (audioUnlocked && ctx && ctx.state === 'suspended') {
+    showUI(true);
+    bumpUI();
+  }
+}
 
   // ---------------- SIM RESET ----------------
   function resetSim(keepSetupState) {
