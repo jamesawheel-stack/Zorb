@@ -564,10 +564,25 @@
     const hoverY = sin(frameCount * CFG.robotHoverSpeedY) * CFG.robotHoverAmpY;
     const scaleAmt = CFG.robotScale * (1 + zorb.recoil * 0.01);
 
-    const halo = 34 + (CFG.chargeTime - zorb.charge) * 2;
-    noStroke();
-    fill(255, 0, 200, zorb.charge > 0 ? 60 : 26);
-    circle(robotX, zorb.y + hoverY, halo * 2);
+    if (zorbLoaded && zorbImg) {
+  push();
+  imageMode(CENTER);
+
+  drawingContext.save();
+  drawingContext.filter = "blur(22px)";
+  tint(255, 0, 200, zorb.charge > 0 ? 180 : 110);
+
+  image(
+    zorbImg,
+    robotX,
+    zorb.y + hoverY,
+    zorbImg.width * scaleAmt * 1.15,
+    zorbImg.height * scaleAmt * 1.15
+  );
+
+  drawingContext.restore();
+  pop();
+}
 
     imageMode(CENTER);
     if (zorbLoaded && zorbImg && zorbImg.width) {
