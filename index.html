@@ -233,7 +233,7 @@
     const w = min(windowWidth, targetW);
     const h = w * (CFG.aspectH / CFG.aspectW);
     createCanvas(floor(w), floor(h));
-    pixelDensity(1);
+    pixelDensity(window.devicePixelRatio || 2);
 
     stars = [];
     for (let i = 0; i < 120; i++) {
