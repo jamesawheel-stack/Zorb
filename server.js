@@ -288,8 +288,6 @@ async function generateRound() {
 
   players = players.slice(0, finale_count);
 
-const seed = randSeed();
-
 const winner_slot = pickWinnerSlot(seed, players.length);
 const winner_player = players.find(p => p.slot === winner_slot);
 
