@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>Zorbblez – Mobile Full v3</title>
+  <title>Zorbblez – Mobile Full v4 (Audio + Fair Motion)</title>
   <style>
     :root {
       --bg: #0B0F1F;
@@ -79,7 +79,6 @@
     .btn.small { min-width: 52px; padding: 10px 10px; }
     .btn.wide { min-width: 110px; }
     .btn.primary { border-color: rgba(120,255,170,0.35); background: rgba(120,255,170,0.12); }
-
     .hidden { display:none !important; }
 
     #toast {
@@ -130,6 +129,7 @@
     <div class="status">
       <span class="pill" id="panelRoster">Roster: numbers</span>
       <span class="pill" id="panelZorb">Zorb: …</span>
+      <span class="pill" id="panelAudio">Audio: locked</span>
     </div>
 
     <div class="note">Tip: after you press Start, the UI will auto-hide in ~2s for clean screen recording.</div>
@@ -145,7 +145,9 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/addons/p5.sound.min.js"></script>
   <script>
+  // ---------------- CONFIG ----------------
   const CFG = {
     aspectW: 9, aspectH: 16,
     baseHeight: 1280,
@@ -157,10 +159,16 @@
     bubbleMaxR: 58,
     bubbleGlow: 18,
 
-    wanderForce: 0.12,
-    maxSpeed: 2.05,
+    // Motion (more randomized / fair)
+    wanderForce: 0.16,
+    maxSpeed: 2.35,
     bounceDamping: 0.985,
-    separationStrength: 0.26,
+    separationStrength: 0.30,
+
+    // Swirl/orbit motion (each bubble gets its own direction/strength)
+    swirlStrength: 0.16,     // tangential pull around center
+    swirlJukeChance: 0.010,  // occasional impulse to break patterns
+    swirlJukeForce: 1.55,
 
     // ZORB SIZE + MOTION
     robotScale: 0.15,
@@ -194,9 +202,30 @@
     sparkLife: 18,
     slowMoFrames: 60,
 
-    countdownSec: 3
+    countdownSec: 3,
   };
 
+  // ---------------- AUDIO ----------------
+  let audioUnlocked = false;
+  let sfxPop = [];
+  let sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension;
+
+  let tensionTarget = 0; // 0..1
+  let tensionVol = 0;    // 0..1
+  let winnerPlayed = false;
+
+  const SFX = {
+    master: 0.90,
+    pop: 0.65,
+    fire: 0.65,
+    reload: 0.45,
+    bass: 0.75,
+    woosh: 0.55,
+    tensionMax: 0.55,
+    winner: 0.95
+  };
+
+  // ---------------- STATE ----------------
   let zorbImg, zorbLoaded = false;
   let rosterImgs = [];
   let players = [], projectiles = [], particles = [], stars = [];
@@ -206,15 +235,30 @@
   let simState = "setup"; // setup | countdown | running | finished
   let countdownFrames = 0;
 
+  // UI refs
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl, inputEl;
-  let panelRosterEl, panelZorbEl, startBtnEl;
+  let panelRosterEl, panelZorbEl, panelAudioEl, startBtnEl;
   let uiHidden = false, hideTimer = null;
 
   function preload() {
     zorbImg = loadImage('Zorb2.PNG?v=4',
       () => { zorbLoaded = true; },
-      () => { zorbLoaded = false; console.warn('Zorb failed to load. Ensure zorb.png is in repo root and lowercase.'); }
+      () => { zorbLoaded = false; console.warn('Zorb failed to load.'); }
     );
+
+    // Load audio
+    sfxPop = [
+      loadSound('pop1.mp3'),
+      loadSound('pop2.mp3'),
+      loadSound('pop3.mp3'),
+      loadSound('pop4.mp3'),
+    ];
+    sfxWinner  = loadSound('winner.mp3');
+    sfxReload  = loadSound('reload.mp3');
+    sfxFire    = loadSound('fire.mp3');
+    sfxBass    = loadSound('bass.wav');
+    sfxWoosh   = loadSound('woosh.wav');
+    sfxTension = loadSound('tension.wav');
   }
 
   function setup() {
@@ -248,8 +292,10 @@
     toastEl = document.getElementById('toast');
     controlsEl = document.getElementById('controls');
     inputEl = document.getElementById('fileInput');
+
     panelRosterEl = document.getElementById('panelRoster');
     panelZorbEl   = document.getElementById('panelZorb');
+    panelAudioEl  = document.getElementById('panelAudio');
     startBtnEl    = document.getElementById('startBtn');
 
     document.getElementById('btnShowPanel').addEventListener('click', () => { showPanel(true); showUI(true); });
@@ -291,6 +337,9 @@
         catch (err) { console.warn('Failed loading', f.name, err); }
       }
 
+      // Optional: shuffle the roster images so upload order ≠ in-game
+      shuffleInPlace(rosterImgs);
+
       resetSim(true);
       enableStart(true);
       updatePanelStatus();
@@ -299,14 +348,17 @@
       bumpUI();
     });
 
+    // Tap behavior:
+    // - If UI hidden -> show it
+    // - Else toggle pause
     document.body.addEventListener('click', (e) => {
       if (!panelEl.classList.contains('hidden')) return;
-
       if (uiHidden) { showUI(true); bumpUI(); return; }
       togglePause();
       bumpUI();
     }, { passive: true });
 
+    // Prevent UI taps from toggling pause
     for (const el of document.querySelectorAll('button, label.btn')) {
       el.addEventListener('click', (ev) => ev.stopPropagation());
       el.addEventListener('touchstart', (ev) => ev.stopPropagation(), { passive: true });
@@ -317,7 +369,6 @@
   }
 
   function enableStart(on) { startBtnEl.disabled = !on; }
-
   function showPanel(show) { panelEl.classList.toggle('hidden', !show); }
 
   function togglePause() {
@@ -326,6 +377,7 @@
   }
 
   function beginCountdown() {
+    unlockAudioOnce(); // iPhone-safe: must be after a user gesture
     showPanel(false);
     paused = false;
     simState = "countdown";
@@ -378,9 +430,40 @@
     }
   }
 
+  // ---------------- AUDIO HELPERS ----------------
+  function unlockAudioOnce() {
+    if (audioUnlocked) return;
+    userStartAudio();
+    audioUnlocked = true;
+
+    // Start tension loop silent; we'll fade it in at final 5
+    if (sfxTension) {
+      sfxTension.setLoop(true);
+      sfxTension.setVolume(0);
+      sfxTension.play();
+    }
+    updatePanelStatus();
+  }
+
+  function playOne(snd, vol) {
+    if (!audioUnlocked || !snd) return;
+    snd.setVolume(SFX.master * vol);
+    snd.play();
+  }
+
+  function playRandPop() {
+    if (!audioUnlocked || !sfxPop.length) return;
+    const snd = random(sfxPop);
+    if (!snd) return;
+    snd.setVolume(SFX.master * SFX.pop);
+    snd.play();
+  }
+
+  // ---------------- SIM RESET ----------------
   function resetSim(keepSetupState) {
     players = []; projectiles = []; particles = []; frameShake = 0;
     paused = false;
+    winnerPlayed = false;
 
     zorb.y = height * CFG.robotY;
     zorb.aimX = width * 0.5;
@@ -392,21 +475,33 @@
     simState = "setup";
     countdownFrames = 0;
 
-    const topBound = height * 0.30;
-    const areaH = height - topBound - 40;
-    const cols = 5, rows = 10;
-    const cellW = width / cols;
-    const cellH = areaH / rows;
+    // Fair IDs randomized
     let ids = Array.from({length: CFG.playerCount}, (_, i) => i + 1);
     shuffleInPlace(ids);
-    
+
+    // True random spawn with spacing attempts (no grid bias)
+    const topBound = height * 0.30;
+    const minY = height * 0.32;
+    const maxY = height - 22;
+    const marginX = 18;
+
     for (let i = 0; i < CFG.playerCount; i++) {
       const r = random(CFG.bubbleMinR, CFG.bubbleMaxR);
-      const cx = (i % cols) * cellW + cellW * 0.5;
-      const cy = topBound + floor(i / cols) * cellH + cellH * 0.5;
 
-      const x = constrain(cx + random(-cellW*0.25, cellW*0.25), r + 12, width - r - 12);
-      const y = constrain(cy + random(-cellH*0.25, cellH*0.25), topBound + r + 8, height - r - 14);
+      let x = width * 0.5, y = (topBound + height) * 0.5;
+      let ok = false;
+
+      for (let attempt = 0; attempt < 240; attempt++) {
+        x = random(r + marginX, width - r - marginX);
+        y = random(minY + r, maxY - r);
+        ok = true;
+
+        for (const other of players) {
+          const d = dist(x, y, other.x, other.y);
+          if (d < r + other.r + 10) { ok = false; break; }
+        }
+        if (ok) break;
+      }
 
       players.push(new Bubble(ids[i], x, y, r, rosterImgs[i] || null));
     }
@@ -415,6 +510,7 @@
     updateHud();
   }
 
+  // Robot X hover
   function getRobotX() {
     const sway = sin(frameCount * CFG.robotSwaySpeedX) * (width * CFG.robotSwayFracX);
     const x = width * 0.5 + sway;
@@ -422,6 +518,7 @@
     return constrain(x, estHalf + 8, width - estHalf - 8);
   }
 
+  // ---------------- MAIN LOOP ----------------
   function draw() {
     if (!paused) step();
     render();
@@ -433,16 +530,35 @@
     for (const s of stars) s.tw += s.sp;
 
     for (const b of players) b.update();
-    for (let i = 0; i < players.length; i++) for (let j = i + 1; j < players.length; j++) players[i].separate(players[j]);
+    for (let i = 0; i < players.length; i++) {
+      for (let j = i + 1; j < players.length; j++) players[i].separate(players[j]);
+    }
 
-    for (let i = projectiles.length - 1; i >= 0; i--) { projectiles[i].update(); if (projectiles[i].dead) projectiles.splice(i, 1); }
-    for (let i = particles.length - 1; i >= 0; i--) { particles[i].update(); if (particles[i].dead) particles.splice(i, 1); }
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      projectiles[i].update();
+      if (projectiles[i].dead) projectiles.splice(i, 1);
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+      particles[i].update();
+      if (particles[i].dead) particles.splice(i, 1);
+    }
+
+    // Tension fade
+    tensionTarget = (players.length <= 5 && simState === "running") ? 1 : 0;
+    tensionVol = lerp(tensionVol, tensionTarget, 0.02);
+    if (audioUnlocked && sfxTension) {
+      sfxTension.setVolume(SFX.master * SFX.tensionMax * tensionVol);
+    }
 
     if (simState === "countdown") {
       countdownFrames -= 1;
-      if (countdownFrames <= 0) { simState = "running"; countdownFrames = 0; }
+      if (countdownFrames <= 0) {
+        simState = "running";
+        countdownFrames = 0;
+      }
       return;
     }
+
     if (simState !== "running") return;
 
     zorb.fireCooldown -= deltaTime / 1000;
@@ -456,14 +572,22 @@
       } else {
         if (zorb.charge <= 0) {
           zorb.charge = CFG.chargeTime;
+
+          // Reload/charge sound at start of charge
+          playOne(sfxReload, SFX.reload);
+
           const t = pickTarget();
           zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
           zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
+
+          // Near miss: play woosh
           if (random() < CFG.nearMissChance * CFG.chaos) {
             zorb.aimX += random([-1, 1]) * random(40, 80);
             zorb.aimY += random(20, 60);
+            playOne(sfxWoosh, SFX.woosh);
           }
         }
+
         zorb.charge -= 1;
         if (zorb.charge <= 0) {
           fireShot();
@@ -472,16 +596,24 @@
       }
     }
 
-    if (players.length === 1) simState = "finished";
+    if (players.length === 1) {
+      simState = "finished";
+      if (!winnerPlayed) {
+        playOne(sfxWinner, SFX.winner);
+        winnerPlayed = true;
+      }
+    }
   }
 
   function pickTarget() {
     if (players.length > 12) return random(players);
+
+    // Slight bias to center for drama, but still random
     let best = players[0], bestScore = -1e9;
     for (const b of players) {
       const centerBias = -dist(b.x, b.y, width*0.5, height*0.62);
       const motion = b.v.mag() * 120;
-      const score = centerBias + motion + random(-50, 50);
+      const score = centerBias + motion + random(-80, 80);
       if (score > bestScore) { bestScore = score; best = b; }
     }
     return best;
@@ -512,10 +644,15 @@
     const ricochet = random() < CFG.ricochetChance * CFG.chaos;
 
     projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
+
+    // Fire sound
+    playOne(sfxFire, SFX.fire);
+
     zorb.recoil = 1.0;
     frameShake = max(frameShake, CFG.screenShake * (players.length <= 5 ? 1.1 : 0.8));
   }
 
+  // ---------------- RENDER ----------------
   function render() {
     let sx = 0, sy = 0;
     if (frameShake > 0 && !paused) {
@@ -564,25 +701,23 @@
     const hoverY = sin(frameCount * CFG.robotHoverSpeedY) * CFG.robotHoverAmpY;
     const scaleAmt = CFG.robotScale * (1 + zorb.recoil * 0.01);
 
+    // silhouette glow (blurred copy)
     if (zorbLoaded && zorbImg) {
-  push();
-  imageMode(CENTER);
-
-  drawingContext.save();
-  drawingContext.filter = "blur(22px)";
-  tint(255, 0, 200, zorb.charge > 0 ? 180 : 110);
-
-  image(
-    zorbImg,
-    robotX,
-    zorb.y + hoverY,
-    zorbImg.width * scaleAmt * 1.15,
-    zorbImg.height * scaleAmt * 1.15
-  );
-
-  drawingContext.restore();
-  pop();
-}
+      push();
+      imageMode(CENTER);
+      drawingContext.save();
+      drawingContext.filter = "blur(22px)";
+      tint(255, 0, 200, zorb.charge > 0 ? 180 : 110);
+      image(
+        zorbImg,
+        robotX,
+        zorb.y + hoverY,
+        zorbImg.width * scaleAmt * 1.15,
+        zorbImg.height * scaleAmt * 1.15
+      );
+      drawingContext.restore();
+      pop();
+    }
 
     imageMode(CENTER);
     if (zorbLoaded && zorbImg && zorbImg.width) {
@@ -603,6 +738,7 @@
       pop();
     }
 
+    // cannon glow dots aligned with cannons
     for (const o of cannonOrigins()) {
       const glow = zorb.charge > 0 ? map(zorb.charge, CFG.chargeTime, 0, 20, 130) : 18;
       noStroke();
@@ -683,166 +819,242 @@
     ctx.restore();
   }
 
+  // ---------------- ENTITIES ----------------
   class Bubble {
-    constructor(id,x,y,r,img){
-      this.id=id; this.x=x; this.y=y; this.r=r; this.img=img;
-      this.v=createVector(random(-1,1),random(-1,1)).mult(random(0.5,1.35));
-      this.wob=random(TAU); this.wobSp=random(0.02,0.05);
-    }
-    update(){
-      const f=p5.Vector.random2D().mult(CFG.wanderForce*CFG.chaos);
-      this.v.add(f);
-      const maxV=CFG.maxSpeed*(0.85+0.35*CFG.chaos);
-      if(this.v.mag()>maxV) this.v.setMag(maxV);
+    constructor(id, x, y, r, img) {
+      this.id = id;
+      this.x = x; this.y = y; this.r = r;
+      this.img = img;
 
-      this.x+=this.v.x; this.y+=this.v.y;
-      const topBound=height*0.28;
-      if(this.x<this.r){this.x=this.r; this.v.x*=-1;}
-      if(this.x>width-this.r){this.x=width-this.r; this.v.x*=-1;}
-      if(this.y<topBound+this.r){this.y=topBound+this.r; this.v.y*=-1;}
-      if(this.y>height-this.r){this.y=height-this.r; this.v.y*=-1;}
+      this.v = createVector(random(-1, 1), random(-1, 1)).mult(random(0.6, 1.6));
+      this.wob = random(TAU);
+      this.wobSp = random(0.02, 0.05);
+
+      // Each bubble gets its own swirl direction/strength for fairness/variety
+      this.spin = random([-1, 1]) * random(0.8, 1.35);
+      this.swirl = random(0.6, 1.4);
+    }
+
+    update() {
+      // Base wander
+      const f = p5.Vector.random2D().mult(CFG.wanderForce * CFG.chaos);
+      this.v.add(f);
+
+      // Swirl/orbit around screen center (adds “rotation around” feel)
+      const cx = width * 0.5;
+      const cy = height * 0.60;
+      const toC = createVector(cx - this.x, cy - this.y);
+
+      // Tangent direction (perpendicular) gives orbital motion
+      const tangent = createVector(-toC.y, toC.x).normalize().mult(CFG.swirlStrength * this.spin * this.swirl * CFG.chaos);
+      this.v.add(tangent);
+
+      // Occasional juke impulse to break patterns
+      if (random() < CFG.swirlJukeChance * CFG.chaos) {
+        const j = p5.Vector.random2D().mult(CFG.swirlJukeForce * random(0.7, 1.2));
+        this.v.add(j);
+      }
+
+      // Speed clamp
+      const maxV = CFG.maxSpeed * (0.85 + 0.35 * CFG.chaos);
+      if (this.v.mag() > maxV) this.v.setMag(maxV);
+
+      // Integrate
+      this.x += this.v.x;
+      this.y += this.v.y;
+
+      // Bounds
+      const topBound = height * 0.28;
+      if (this.x < this.r) { this.x = this.r; this.v.x *= -1; }
+      if (this.x > width - this.r) { this.x = width - this.r; this.v.x *= -1; }
+      if (this.y < topBound + this.r) { this.y = topBound + this.r; this.v.y *= -1; }
+      if (this.y > height - this.r) { this.y = height - this.r; this.v.y *= -1; }
 
       this.v.mult(CFG.bounceDamping);
-      this.wob+=this.wobSp;
+      this.wob += this.wobSp;
     }
-    separate(o){
-      const dx=o.x-this.x, dy=o.y-this.y;
-      const d=Math.sqrt(dx*dx+dy*dy);
-      const minD=this.r+o.r+6;
-      if(d>0 && d<minD){
-        const overlap=(minD-d)/minD;
-        const push=overlap*CFG.separationStrength*(1+0.3*CFG.chaos);
-        const nx=dx/d, ny=dy/d;
 
-        this.x-=nx*push*40; this.y-=ny*push*40;
-        o.x+=nx*push*40; o.y+=ny*push*40;
+    separate(other) {
+      const dx = other.x - this.x, dy = other.y - this.y;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      const minD = this.r + other.r + 8;
+      if (d > 0 && d < minD) {
+        const overlap = (minD - d) / minD;
+        const push = overlap * CFG.separationStrength * (1 + 0.35 * CFG.chaos);
+        const nx = dx / d, ny = dy / d;
 
-        this.v.x-=nx*push*1.2; this.v.y-=ny*push*1.2;
-        o.v.x+=nx*push*1.2; o.v.y+=ny*push*1.2;
+        this.x -= nx * push * 40; this.y -= ny * push * 40;
+        other.x += nx * push * 40; other.y += ny * push * 40;
+
+        this.v.x -= nx * push * 1.2; this.v.y -= ny * push * 1.2;
+        other.v.x += nx * push * 1.2; other.v.y += ny * push * 1.2;
       }
     }
-    draw(){
+
+    draw() {
       push();
-      translate(this.x,this.y);
-      const wobble=1+sin(this.wob)*0.03;
+      translate(this.x, this.y);
+      const wobble = 1 + sin(this.wob) * 0.03;
 
+      // outer glow
       noStroke();
-      fill(120,220,255,24);
-      circle(0,0,this.r*2+CFG.bubbleGlow);
+      fill(120, 220, 255, 24);
+      circle(0, 0, this.r*2 + CFG.bubbleGlow);
 
-      stroke(190,245,255,110);
+      // rim + glass fill
+      stroke(190, 245, 255, 110);
       strokeWeight(3);
-      fill(255,255,255,14);
-      ellipse(0,0,this.r*2*wobble,this.r*2*(2-wobble));
+      fill(255, 255, 255, 14);
+      ellipse(0, 0, this.r*2*wobble, this.r*2*(2-wobble));
 
-      if(this.img) drawClippedImageCircle(this.img, 0, 2, this.r*1.55);
-      else{
+      // content
+      if (this.img) drawClippedImageCircle(this.img, 0, 2, this.r*1.55);
+      else {
         noStroke();
         fill(255,255,255,210);
-        textAlign(CENTER,CENTER);
+        textAlign(CENTER, CENTER);
         textSize(this.r*0.6);
-        text(this.id,0,6);
+        text(this.id, 0, 6);
       }
 
+      // shine
       noStroke();
       fill(255,255,255,55);
-      ellipse(-this.r*0.28,-this.r*0.32,this.r*0.85,this.r*0.55);
+      ellipse(-this.r*0.28, -this.r*0.32, this.r*0.85, this.r*0.55);
+
       pop();
     }
   }
 
-  class Projectile{
-    constructor(x,y,vx,vy,piercing=false,ricochet=false){
-      this.x=x; this.y=y; this.v=createVector(vx,vy);
-      this.r=CFG.projectileRadius; this.dead=false;
-      this.piercing=piercing; this.ricochet=ricochet; this.hasRicocheted=false;
+  class Projectile {
+    constructor(x, y, vx, vy, piercing=false, ricochet=false) {
+      this.x=x; this.y=y;
+      this.v=createVector(vx, vy);
+      this.r=CFG.projectileRadius;
+      this.dead=false;
+      this.piercing=piercing;
+      this.ricochet=ricochet;
+      this.hasRicocheted=false;
     }
-    update(){
-      this.x+=this.v.x; this.y+=this.v.y;
-      if(this.y>height+120||this.x<-120||this.x>width+120){ this.dead=true; return; }
 
-      for(let i=players.length-1;i>=0;i--){
-        const b=players[i];
-        if(dist(this.x,this.y,b.x,b.y)<b.r+this.r){
+    update() {
+      this.x += this.v.x;
+      this.y += this.v.y;
+
+      if (this.y > height + 120 || this.x < -120 || this.x > width + 120) {
+        this.dead = true;
+        return;
+      }
+
+      for (let i = players.length - 1; i >= 0; i--) {
+        const b = players[i];
+        if (dist(this.x, this.y, b.x, b.y) < b.r + this.r) {
           popBubble(b);
-          players.splice(i,1);
+          players.splice(i, 1);
 
-          if(!this.piercing) this.dead=true;
-          else{
-            this.r*=0.92; this.v.mult(0.92);
-            if(this.r<6) this.dead=true;
+          if (!this.piercing) {
+            this.dead = true;
+          } else {
+            this.r *= 0.92;
+            this.v.mult(0.92);
+            if (this.r < 6) this.dead = true;
           }
 
-          if(this.ricochet && !this.hasRicocheted && !this.dead){
-            this.hasRicocheted=true;
-            const nv=p5.Vector.random2D().mult(CFG.projectileSpeed*0.85);
-            nv.y=abs(nv.y)+6;
-            this.v=nv;
+          if (this.ricochet && !this.hasRicocheted && !this.dead) {
+            this.hasRicocheted = true;
+            const nv = p5.Vector.random2D().mult(CFG.projectileSpeed*0.85);
+            nv.y = abs(nv.y) + 6;
+            this.v = nv;
           }
           break;
         }
       }
     }
-    draw(){
+
+    draw() {
       noStroke();
-      fill(255,120,0,55);
-      circle(this.x,this.y,this.r*4.4);
-      fill(255,240,120,220);
-      circle(this.x,this.y,this.r*1.8);
-      stroke(255,255,255,70);
+      fill(255, 120, 0, 55);
+      circle(this.x, this.y, this.r*4.4);
+      fill(255, 240, 120, 220);
+      circle(this.x, this.y, this.r*1.8);
+
+      stroke(255, 255, 255, 70);
       strokeWeight(3);
-      line(this.x,this.y,this.x-this.v.x*2.0,this.y-this.v.y*2.0);
+      line(this.x, this.y, this.x - this.v.x*2.0, this.y - this.v.y*2.0);
     }
   }
 
-  class Particle{
-    constructor(x,y,vx,vy,life,kind='spark'){
-      this.x=x; this.y=y; this.v=createVector(vx,vy);
-      this.life=life; this.maxLife=life; this.kind=kind; this.dead=false;
-      this.r=(kind==='pop')?random(3,7):random(2,4);
+  class Particle {
+    constructor(x, y, vx, vy, life, kind='spark') {
+      this.x=x; this.y=y;
+      this.v=createVector(vx, vy);
+      this.life=life;
+      this.maxLife=life;
+      this.kind=kind;
+      this.dead=false;
+      this.r=(kind === 'pop') ? random(3,7) : random(2,4);
     }
-    update(){ this.x+=this.v.x; this.y+=this.v.y; this.v.mult(0.93); this.life-=1; if(this.life<=0) this.dead=true; }
-    draw(){
-      const a=map(this.life,0,this.maxLife,0,255);
+    update() {
+      this.x += this.v.x;
+      this.y += this.v.y;
+      this.v.mult(0.93);
+      this.life -= 1;
+      if (this.life <= 0) this.dead = true;
+    }
+    draw() {
+      const a = map(this.life, 0, this.maxLife, 0, 255);
       noStroke();
-      if(this.kind==='pop') fill(255,255,255,a);
+      if (this.kind === 'pop') fill(255,255,255,a);
       else fill(255,80,240,a);
-      circle(this.x,this.y,this.r);
+      circle(this.x, this.y, this.r);
     }
   }
 
-  function popBubble(b){
-    frameShake=max(frameShake, CFG.screenShake*(players.length<=5?1.2:1.0));
-    for(let i=0;i<CFG.popParticles;i++){
-      const v=p5.Vector.random2D().mult(random(2.5,8.5));
-      v.y+=1.2;
-      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.sparkLife,'spark'));
+  function popBubble(b) {
+    // Pop variety + bass hit for shake moments
+    playRandPop();
+    playOne(sfxBass, SFX.bass);
+
+    frameShake = max(frameShake, CFG.screenShake*(players.length<=5?1.2:1.0));
+
+    for (let i = 0; i < CFG.popParticles; i++) {
+      const v = p5.Vector.random2D().mult(random(2.5, 8.5));
+      v.y += 1.2;
+      particles.push(new Particle(b.x, b.y, v.x, v.y, CFG.sparkLife, 'spark'));
     }
-    for(let i=0;i<10;i++){
-      const v=p5.Vector.random2D().mult(random(1.2,6.2));
-      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.popLife,'pop'));
+    for (let i = 0; i < 10; i++) {
+      const v = p5.Vector.random2D().mult(random(1.2, 6.2));
+      particles.push(new Particle(b.x, b.y, v.x, v.y, CFG.popLife, 'pop'));
     }
   }
 
-  function updatePanelStatus(){
+  // ---------------- UI STATUS ----------------
+  function updatePanelStatus() {
     panelRosterEl.textContent = rosterImgs.length ? `Roster: ${rosterImgs.length} images` : 'Roster: numbers';
     panelZorbEl.textContent = zorbLoaded ? 'Zorb: OK' : 'Zorb: missing';
     panelZorbEl.classList.toggle('ok', zorbLoaded);
     panelZorbEl.classList.toggle('warn', !zorbLoaded);
+
+    panelAudioEl.textContent = audioUnlocked ? 'Audio: unlocked' : 'Audio: locked';
+    panelAudioEl.classList.toggle('ok', audioUnlocked);
+    panelAudioEl.classList.toggle('warn', !audioUnlocked);
+
     if (rosterImgs.length) enableStart(true);
     else enableStart(false);
   }
 
-  function updateHud(){
+  function updateHud() {
     const roster = rosterImgs.length ? `${rosterImgs.length} img` : `numbers`;
-    const z = zorbLoaded ? `ok` : `MISSING zorb.png`;
+    const z = zorbLoaded ? `ok` : `MISSING Zorb2.PNG`;
+    const a = audioUnlocked ? `unlocked` : `locked`;
     const state = (simState === "setup") ? "SETUP" : (simState === "countdown") ? "COUNTDOWN" : (simState === "running") ? "RUNNING" : "FINISH";
     const cd = (simState === "countdown") ? ` • starts in ${ceil(countdownFrames/60)}s` : '';
     hudStatusEl.innerHTML =
-      `State: <b>${state}</b> • Zorb: <b>${z}</b> • Roster: <b>${roster}</b> • Remaining: <b>${players.length}</b> • Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
+      `State: <b>${state}</b> • Zorb: <b>${z}</b> • Audio: <b>${a}</b> • Roster: <b>${roster}</b> • Remaining: <b>${players.length}</b> • Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
       (paused ? ` • <b>PAUSED</b>` : ``);
     updatePanelStatus();
   }
+
   </script>
 </body>
 </html>
