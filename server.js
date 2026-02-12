@@ -5,24 +5,50 @@ import { createClient } from "@supabase/supabase-js";
 const app = express();
 app.use(express.json());
 
+/**
+ * =========================
+ * ENV / CONFIG
+ * =========================
+ */
 const PORT = process.env.PORT || 10000;
 
-// ENV VARIABLES
-const ACCESS_TOKEN = process.env.IG_ACCESS_TOKEN;
-const IG_USER_ID = process.env.IG_USER_ID;
-const PLAYER_COUNT = Number(process.env.PLAYER_COUNT || 50);
-const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "in").toLowerCase();
+// Admin auth for /admin/generate
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+
+// CORS: allow your game site to POST winner back to backend
+// Example: https://yourgame.github.io or https://zorbblez.com
 const GAME_ORIGIN = process.env.GAME_ORIGIN || "";
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// IG (optional until you start posting)
+// Your existing setup uses graph.instagram.com endpoints.
+// If you later move to Meta Graph endpoints, we can upgrade this cleanly.
+const ACCESS_TOKEN = process.env.IG_ACCESS_TOKEN || "";
+const IG_USER_ID = process.env.IG_USER_ID || ""; // currently unused by graph.instagram.com calls below
+const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "in").toLowerCase();
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: false }
+// Defaults
+const DEFAULT_TRAINING_COUNT = Number(process.env.PLAYER_COUNT || 50); // used when <2 entrants
+const MAX_FINALISTS = 100;
+const MAX_TRAINING = 50;
+
+// Supabase
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  // Fail fast so Render logs show the issue
+  throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars.");
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
 });
 
-// CORS for game winner reporting
+/**
+ * =========================
+ * CORS
+ * =========================
+ */
 app.use((req, res, next) => {
   if (GAME_ORIGIN) {
     res.setHeader("Access-Control-Allow-Origin", GAME_ORIGIN);
@@ -33,8 +59,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// Utility
-function shuffle(arr) {
+/**
+ * =========================
+ * UTIL
+ * =========================
+ */
+function todayISODate() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function clamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function shuffleInPlace(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
@@ -42,17 +80,28 @@ function shuffle(arr) {
   return arr;
 }
 
-function todayId() {
-  return new Date().toISOString().slice(0, 10);
+// Keep it deterministic-ish per request but unique enough
+function makeSeedString() {
+  // string is easiest for Postgres bigint safety across JS
+  return String(Date.now()) + String(Math.floor(Math.random() * 1000)).padStart(3, "0");
 }
 
 function qualifies(text = "") {
   if (!REQUIRE_KEYWORD) return true;
-  return text.toLowerCase().includes(REQUIRE_KEYWORD);
+  return String(text).toLowerCase().includes(REQUIRE_KEYWORD);
 }
 
-// Get latest IG post
-async function getLatestMedia() {
+/**
+ * =========================
+ * INSTAGRAM HELPERS (OPTIONAL)
+ * =========================
+ * NOTE:
+ * - These endpoints require you to have at least 1 post before they work.
+ * - If you have 0 posts, we fall back to Training Round automatically.
+ */
+async function igGetLatestMedia() {
+  if (!ACCESS_TOKEN) throw new Error("Missing IG_ACCESS_TOKEN");
+
   const url =
     `https://graph.instagram.com/me/media` +
     `?fields=id,permalink,timestamp,caption` +
@@ -62,7 +111,7 @@ async function getLatestMedia() {
   const res = await fetch(url);
   const data = await res.json();
 
-  if (!res.ok || data.error) {
+  if (!res.ok || data?.error) {
     const msg = data?.error?.message || JSON.stringify(data);
     throw new Error(`IG media fetch failed: ${msg}`);
   }
@@ -71,89 +120,185 @@ async function getLatestMedia() {
     throw new Error("IG media fetch returned no posts.");
   }
 
-  // Newest first (safe)
   data.data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   return data.data[0];
 }
 
+async function igGetAllComments(mediaId) {
+  if (!ACCESS_TOKEN) throw new Error("Missing IG_ACCESS_TOKEN");
 
-// Get comments
-async function getComments(mediaId) {
-  // Instagram Basic display / graph.instagram.com supports comments for IG Professional
-  // Endpoint:
+  // Basic Display supports:
   // https://graph.instagram.com/{media-id}/comments?fields=id,username,text,timestamp
-
   let url =
     `https://graph.instagram.com/${mediaId}/comments` +
     `?fields=id,username,text,timestamp` +
     `&limit=50` +
     `&access_token=${ACCESS_TOKEN}`;
 
-  let all = [];
+  const all = [];
 
   while (url) {
     const res = await fetch(url);
     const data = await res.json();
 
-    if (!res.ok || data.error) {
+    if (!res.ok || data?.error) {
       const msg = data?.error?.message || JSON.stringify(data);
       throw new Error(`IG comments fetch failed: ${msg}`);
     }
 
     all.push(...(data.data || []));
-    url = data.paging?.next || null; // pagination supported if present
+    url = data.paging?.next || null;
   }
 
   return all;
 }
 
-// Generate round
-async function generateRound() {
-  const post = await getLatestMedia();
-  const comments = await getComments(post.id);
+/**
+ * =========================
+ * SUPABASE: ROUND GENERATION (Training Mode A)
+ * =========================
+ */
+async function createOrReplaceTodaysRound() {
+  const roundDate = todayISODate();
+  const seed = makeSeedString();
 
-  let entrants = comments.filter(c => qualifies(c.text));
-  const seen = new Set();
-  entrants = entrants.filter(c => {
-    const u = c.username.toLowerCase();
-    if (seen.has(u)) return false;
-    seen.add(u);
-    return true;
-  });
+  // Try to get comments; if IG has no posts, we fall back to training.
+  let post = null;
+  let uniqueEntrants = []; // { username }
+  try {
+    post = await igGetLatestMedia();
+    const comments = await igGetAllComments(post.id);
 
-  shuffle(entrants);
-  const picked = entrants.slice(0, PLAYER_COUNT);
+    // filter by keyword, de-dupe by username
+    const seen = new Set();
+    uniqueEntrants = comments
+      .filter((c) => qualifies(c.text))
+      .filter((c) => {
+        const u = (c.username || "").toLowerCase();
+        if (!u) return false;
+        if (seen.has(u)) return false;
+        seen.add(u);
+        return true;
+      })
+      .map((c) => ({ username: c.username }));
+  } catch (e) {
+    // No posts / token issues / etc -> training round
+    post = null;
+    uniqueEntrants = [];
+  }
 
-  const players = picked.map((c, i) => ({
-    slot: i + 1,
-    handle: c.username,
-    img: null
-  }));
+  const hasEntrants = uniqueEntrants.length >= 2;
 
-  const round = {
-    round_id: todayId(),
-    media_id: post.id,
-    permalink: post.permalink,
-    players
+  // Finale count logic:
+  const finaleCount = hasEntrants
+    ? clamp(uniqueEntrants.length, 2, MAX_FINALISTS)
+    : clamp(DEFAULT_TRAINING_COUNT, 2, MAX_TRAINING);
+
+  // "Claimed total" headline:
+  // For now, easiest reliable number is:
+  // - if entrants exist: total unique entrants found
+  // - if training: use finaleCount (until you have followers)
+  // When you’re ready, we can swap this to real follower_count.
+  const claimedTotal = hasEntrants ? uniqueEntrants.length : finaleCount;
+
+  const mode = hasEntrants ? "entrants" : "training";
+
+  // Upsert round row
+  const { data: round, error: roundErr } = await supabase
+    .from("rounds")
+    .upsert(
+      {
+        round_date: roundDate,
+        mode,
+        status: "pending",
+        claimed_total: claimedTotal,
+        finale_count: finaleCount,
+        seed,
+        error_message: null,
+      },
+      { onConflict: "round_date" }
+    )
+    .select("id, round_date, mode, status, claimed_total, finale_count, seed")
+    .single();
+
+  if (roundErr) throw new Error(`Supabase rounds upsert failed: ${roundErr.message}`);
+
+  // Delete existing entrants for today (regen safe)
+  const { error: delErr } = await supabase.from("entrants").delete().eq("round_id", round.id);
+  if (delErr) throw new Error(`Supabase entrants delete failed: ${delErr.message}`);
+
+  // Insert entrants
+  const entrantRows = [];
+  if (mode === "entrants") {
+    shuffleInPlace(uniqueEntrants);
+    const picked = uniqueEntrants.slice(0, finaleCount);
+
+    for (let i = 0; i < picked.length; i++) {
+      entrantRows.push({
+        round_id: round.id,
+        entrant_number: i + 1,
+        username: picked[i].username,
+        profile_pic_url: null, // add later when we implement pic fetch
+        ig_user_id: null,
+        source: "comment",
+      });
+    }
+  } else {
+    // training = numbered bubbles only
+    for (let i = 0; i < finaleCount; i++) {
+      entrantRows.push({
+        round_id: round.id,
+        entrant_number: i + 1,
+        username: null,
+        profile_pic_url: null,
+        ig_user_id: null,
+        source: "training",
+      });
+    }
+  }
+
+  const { error: insErr } = await supabase.from("entrants").insert(entrantRows);
+  if (insErr) throw new Error(`Supabase entrants insert failed: ${insErr.message}`);
+
+  return {
+    round_date: round.round_date,
+    mode: round.mode,
+    status: round.status,
+    claimed_total: round.claimed_total,
+    finale_count: round.finale_count,
+    seed: round.seed,
+    post: post ? { id: post.id, permalink: post.permalink } : null,
   };
-
-  await supabase
-    .from("zorbblez_rounds")
-    .upsert(round, { onConflict: "round_id" });
-
-  return round;
 }
+
+/**
+ * =========================
+ * ROUTES
+ * =========================
+ */
 
 // Root
 app.get("/", (req, res) => {
   res.json({ ok: true, service: "zorbblez-backend" });
 });
 
+// Health check (Supabase connectivity)
+app.get("/api/health", async (req, res) => {
+  try {
+    const { data, error } = await supabase.from("rounds").select("id").limit(1);
+    if (error) throw error;
+    res.json({ ok: true, supabase: "connected", roundsRows: data.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, supabase: "error", error: String(e?.message || e) });
+  }
+});
+
 // Admin page
 app.get("/admin", (req, res) => {
   res.send(`
     <h2>Zorbblez Admin</h2>
-    <input id="key" placeholder="Admin Key"/>
+    <p>Generate today's round (creates Training Round if <2 eligible entrants).</p>
+    <input id="key" placeholder="Admin Key" />
     <button onclick="gen()">Generate Today’s Round</button>
     <pre id="out"></pre>
     <script>
@@ -166,85 +311,188 @@ app.get("/admin", (req, res) => {
   `);
 });
 
-// Generate endpoint
+// Generate today’s round
 app.post("/admin/generate", async (req, res) => {
-  if (ADMIN_KEY && req.headers["x-admin-key"] !== ADMIN_KEY)
+  if (ADMIN_KEY && req.headers["x-admin-key"] !== ADMIN_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
+  }
 
   try {
-    const round = await generateRound();
-    res.json(round);
+    const round = await createOrReplaceTodaysRound();
+    res.json({ ok: true, ...round });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// Game feed
+/**
+ * Game feed (backward compatible name)
+ * Your game can fetch /top50.json to get today’s config + entrants
+ */
 app.get("/top50.json", async (req, res) => {
-  const { data } = await supabase
-    .from("zorbblez_rounds")
-    .select("*")
-    .eq("round_id", todayId())
-    .single();
+  try {
+    const roundDate = todayISODate();
 
-  res.json(data);
+    const { data: round, error: rErr } = await supabase
+      .from("rounds")
+      .select("id, round_date, mode, claimed_total, finale_count, seed, winner_entrant_id, status")
+      .eq("round_date", roundDate)
+      .single();
+
+    if (rErr) {
+      // If round doesn't exist yet, return a helpful response
+      return res.status(404).json({
+        error: "No round for today yet. Use /admin/generate first.",
+        round_date: roundDate,
+      });
+    }
+
+    const { data: entrants, error: eErr } = await supabase
+      .from("entrants")
+      .select("id, entrant_number, username, profile_pic_url")
+      .eq("round_id", round.id)
+      .order("entrant_number", { ascending: true });
+
+    if (eErr) throw eErr;
+
+    res.json({
+      round_date: round.round_date,
+      mode: round.mode,
+      status: round.status,
+      claimed_total: round.claimed_total,
+      finale_count: round.finale_count,
+      seed: round.seed,
+      entrants,
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
 });
 
-// Winner reporting
+// Alias (nicer name)
+app.get("/round/today.json", (req, res) => {
+  // same output as /top50.json
+  req.url = "/top50.json";
+  app._router.handle(req, res);
+});
+
+// Winner reporting (from game)
 app.post("/round/today/winner", async (req, res) => {
-  const { winner, winnerSlot } = req.body;
-  await supabase
-    .from("zorbblez_rounds")
-    .update({
-      winner,
-      winner_slot: winnerSlot,
-      winner_set_at: new Date().toISOString()
-    })
-    .eq("round_id", todayId());
+  try {
+    const { winnerSlot } = req.body;
 
-  res.json({ ok: true });
+    if (!winnerSlot || typeof winnerSlot !== "number") {
+      return res.status(400).json({ error: "winnerSlot (number) required" });
+    }
+
+    const roundDate = todayISODate();
+
+    const { data: round, error: rErr } = await supabase
+      .from("rounds")
+      .select("id, round_date")
+      .eq("round_date", roundDate)
+      .single();
+
+    if (rErr) throw rErr;
+
+    const { data: winnerEntrant, error: wErr } = await supabase
+      .from("entrants")
+      .select("id, username, profile_pic_url, entrant_number")
+      .eq("round_id", round.id)
+      .eq("entrant_number", winnerSlot)
+      .single();
+
+    if (wErr) throw wErr;
+
+    // Update round winner
+    const { error: uErr } = await supabase
+      .from("rounds")
+      .update({ winner_entrant_id: winnerEntrant.id, status: "rendered" })
+      .eq("id", round.id);
+
+    if (uErr) throw uErr;
+
+    // Insert/Upsert winners history
+    const { error: insErr } = await supabase
+      .from("winners")
+      .upsert(
+        {
+          round_id: round.id,
+          entrant_id: winnerEntrant.id,
+          round_date: roundDate,
+          username: winnerEntrant.username,
+          profile_pic_url: winnerEntrant.profile_pic_url,
+        },
+        { onConflict: "round_id" }
+      );
+
+    if (insErr) throw insErr;
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
-// Leaderboard
+// Leaderboard JSON
 app.get("/leaderboard.json", async (req, res) => {
-  const { data } = await supabase
-    .from("zorbblez_rounds")
-    .select("winner")
-    .not("winner", "is", null);
+  try {
+    const { data, error } = await supabase
+      .from("winners")
+      .select("username")
+      .not("username", "is", null);
 
-  const counts = {};
-  data.forEach(r => {
-    const w = r.winner;
-    counts[w] = (counts[w] || 0) + 1;
-  });
+    if (error) throw error;
 
-  const sorted = Object.entries(counts)
-    .sort((a,b)=>b[1]-a[1])
-    .map(([handle,wins])=>({handle,wins}));
+    const counts = {};
+    for (const row of data) {
+      const u = row.username;
+      if (!u) continue;
+      counts[u] = (counts[u] || 0) + 1;
+    }
 
-  res.json(sorted);
+    const sorted = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([handle, wins]) => ({ handle, wins }));
+
+    res.json(sorted);
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
 });
 
-// Bio output
+// Bio text (top 3)
 app.get("/bio.txt", async (req, res) => {
-  const { data } = await supabase
-    .from("zorbblez_rounds")
-    .select("winner")
-    .not("winner", "is", null);
+  try {
+    const { data, error } = await supabase
+      .from("winners")
+      .select("username")
+      .not("username", "is", null);
 
-  const counts = {};
-  data.forEach(r => {
-    const w = r.winner;
-    counts[w] = (counts[w] || 0) + 1;
-  });
+    if (error) throw error;
 
-  const top = Object.entries(counts)
-    .sort((a,b)=>b[1]-a[1])
-    .slice(0,3)
-    .map(([h,c])=>`@${h}(${c})`)
-    .join(" • ");
+    const counts = {};
+    for (const row of data) {
+      const u = row.username;
+      if (!u) continue;
+      counts[u] = (counts[u] || 0) + 1;
+    }
 
-  res.send(`🏆 Top: ${top || "TBD"}`);
+    const top = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([h, c]) => `@${h}(${c})`)
+      .join(" • ");
+
+    res.type("text/plain").send(`🏆 Top: ${top || "TBD"}`);
+  } catch (e) {
+    res.status(500).type("text/plain").send("Error generating bio");
+  }
 });
 
+/**
+ * =========================
+ * START
+ * =========================
+ */
 app.listen(PORT, () => console.log("Listening on", PORT));
