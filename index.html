@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Zorbblez – Mobile Full</title>
+  <style>
+    :root {
+      --bg: #0B0F1F;
+      --panel: rgba(0,0,0,0.35);
+      --panel2: rgba(0,0,0,0.55);
+      --stroke: rgba(255,255,255,0.14);
+      --text: rgba(255,255,255,0.92);
+      --btn: rgba(255,255,255,0.11);
+      --btnHover: rgba(255,255,255,0.18);
+    }
+    html, body { margin:0; padding:0; background:var(--bg); overflow:hidden; height:100%; }
+    canvas { display:block; margin:0 auto; touch-action:none; }
+
+    #hud {
+      position: fixed; left: 12px; top: 12px; z-index: 10;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: var(--text); font-size: 12px; line-height: 1.25;
+      background: var(--panel); border: 1px solid var(--stroke);
+      padding: 10px 12px; border-radius: 12px; backdrop-filter: blur(10px);
+      max-width: 380px;
+    }
+    #hud b { font-size: 13px; }
+    #hud .tiny { opacity:0.78; font-size: 11px; margin-top: 6px; }
+
+    #panel {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      z-index: 30;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--panel2); border: 1px solid rgba(255,255,255,0.18);
+      padding: 18px 18px 14px; border-radius: 16px;
+      color: var(--text);
+      width: min(92vw, 440px);
+      text-align: center;
+      backdrop-filter: blur(12px);
+    }
+    #panel h1 { font-size: 18px; margin: 0 0 10px; }
+    #panel p { margin: 8px 0; font-size: 12px; opacity: 0.9; line-height: 1.35; }
+    #panel input { display:none; }
+
+    #controls {
+      position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+      z-index: 25;
+      display: flex; gap: 10px;
+      padding: 10px;
+      border-radius: 18px;
+      background: var(--panel2);
+      border: 1px solid rgba(255,255,255,0.16);
+      backdrop-filter: blur(14px);
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    .btn {
+      appearance: none; border: 1px solid rgba(255,255,255,0.18);
+      background: var(--btn);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      cursor: pointer;
+      min-width: 64px;
+    }
+    .btn:active { transform: translateY(1px); background: var(--btnHover); }
+    .btn.small { min-width: 52px; padding: 10px 10px; }
+    .btn.wide { min-width: 96px; }
+
+    .hidden { display:none !important; }
+
+    #toast {
+      position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
+      z-index: 40;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-size: 12px;
+      color: var(--text);
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.14);
+      padding: 8px 10px;
+      border-radius: 999px;
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      transition: opacity 220ms ease;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="toast">UI hidden • tap top-left corner to show</div>
+
+  <div id="hud">
+    <b>Zorbblez – Top 50</b>
+    <div id="status">Loading…</div>
+    <div class="tiny">Tap background = pause/resume • Hide UI for recording</div>
+  </div>
+
+  <div id="panel">
+    <h1>Load today’s Top 50</h1>
+    <p>Select up to <b>50</b> profile images. The sim uses those images in bubbles and spotlights the winner at the end.</p>
+    <label class="btn wide" style="display:inline-block;">
+      Choose images
+      <input id="fileInput" type="file" accept="image/*" multiple />
+    </label>
+    <p style="margin-top:10px; opacity:0.75; font-size:11px;">Or start without images (numbers only).</p>
+    <button class="btn wide" id="startNoImages" type="button">Start with numbers</button>
+  </div>
+
+  <div id="controls">
+    <button class="btn wide" id="btnLoad" type="button">Load</button>
+    <button class="btn" id="btnPause" type="button">Pause</button>
+    <button class="btn" id="btnRestart" type="button">Restart</button>
+    <button class="btn small" id="btnChaosDown" type="button">–</button>
+    <button class="btn small" id="btnChaosUp" type="button">+</button>
+    <button class="btn wide" id="btnHide" type="button">Hide UI</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+
+  <script>
+  /**********************************************************************
+   * Zorbblez – Mobile Full (single file)
+   *
+   * Restores:
+   * - 2.5D neon bubbles + shine + wobble
+   * - Projectiles (energy balls) + glow
+   * - Pop effects + particles
+   * - Screen shake on hits
+   * - Winner spotlight (big center bubble)
+   * - Mobile UI controls + auto-hide for recording
+   *
+   * Fixes:
+   * - Zorb cache-busting on GitHub Pages: zorb.png?v=3
+   * - 3-second countdown before first shot
+   **********************************************************************/
+
+  const CFG = {
+    aspectW: 9, aspectH: 16,
+    baseHeight: 1280,
+    bgColor: '#0B0F1F',
+    vignette: true,
+
+    playerCount: 50,
+    bubbleMinR: 42,
+    bubbleMaxR: 58,
+    bubbleGlow: 18,
+
+    wanderForce: 0.12,
+    maxSpeed: 2.05,
+    bounceDamping: 0.985,
+    separationStrength: 0.26,
+
+    robotScale: 0.55,
+    robotY: 0.13, // fraction of height
+    robotHoverAmp: 10,
+    robotHoverSpeed: 0.028,
+
+    chargeTime: 10, // frames
+    fireRate: 0.75,      // shots/sec early
+    fireRateFinal: 0.34, // shots/sec when <=5
+    fireRateFinal2: 0.20,// shots/sec when <=2
+
+    aimJitter: 16,
+    projectileSpeed: 16,
+    projectileRadius: 10,
+
+    chaos: 1.0,
+    multiElimChance: 0.08,
+    nearMissChance: 0.10,
+    ricochetChance: 0.06,
+
+    screenShake: 12,
+    popParticles: 22,
+    popLife: 26,
+    sparkLife: 18,
+    slowMoFrames: 60,
+
+    countdownSec: 3
+  };
+
+  // State
+  let zorbImg, zorbLoaded = false;
+  let rosterImgs = [];
+  let players = [];
+  let projectiles = [];
+  let particles = [];
+  let stars = [];
+
+  let paused = false;
+  let frameShake = 0;
+
+  let zorb = { x:0, y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0 };
+
+  let countdownFrames = 0;
+
+  // UI
+  let hudEl, statusEl, panelEl, toastEl, controlsEl, inputEl;
+  let uiHidden = false, hideTimer = null;
+
+  function preload() {
+    // IMPORTANT: keep file name as zorb.png in same folder as index.html
+    // cache-busting query avoids GitHub Pages caching old image
+    zorbImg = loadImage('zorb.png?v=3',
+      () => { zorbLoaded = true; },
+      () => { zorbLoaded = false; console.warn('Zorb failed to load. Ensure zorb.png is in repo root and lowercase.'); }
+    );
+  }
+
+  function setup() {
+    createOrResizeCanvas();
+    hookupUI();
+    resetSim();
+    armAutoHide();
+  }
+
+  function windowResized() { createOrResizeCanvas(); }
+
+  function createOrResizeCanvas() {
+    const targetH = min(windowHeight, CFG.baseHeight);
+    const targetW = targetH * (CFG.aspectW / CFG.aspectH);
+    const w = min(windowWidth, targetW);
+    const h = w * (CFG.aspectH / CFG.aspectW);
+    createCanvas(floor(w), floor(h));
+    pixelDensity(1);
+
+    // background starfield
+    stars = [];
+    for (let i = 0; i < 120; i++) {
+      stars.push({ x: random(width), y: random(height), r: random(0.8, 2.2), tw: random(TAU), sp: random(0.006, 0.02) });
+    }
+  }
+
+  function hookupUI() {
+    hudEl = document.getElementById('hud');
+    statusEl = document.getElementById('status');
+    panelEl = document.getElementById('panel');
+    toastEl = document.getElementById('toast');
+    controlsEl = document.getElementById('controls');
+    inputEl = document.getElementById('fileInput');
+
+    document.getElementById('btnLoad').addEventListener('click', () => showLoadPanel(true));
+    document.getElementById('btnPause').addEventListener('click', () => { togglePause(); bumpControls(); });
+    document.getElementById('btnRestart').addEventListener('click', () => { resetSim(); armAutoHide(); });
+    document.getElementById('btnChaosDown').addEventListener('click', () => { CFG.chaos = max(0.35, CFG.chaos - 0.15); bumpControls(); });
+    document.getElementById('btnChaosUp').addEventListener('click', () => { CFG.chaos = min(3.0, CFG.chaos + 0.15); bumpControls(); });
+    document.getElementById('btnHide').addEventListener('click', () => setUIHidden(true, true));
+
+    document.getElementById('startNoImages').addEventListener('click', () => {
+      rosterImgs = [];
+      showLoadPanel(false);
+      resetSim();
+      armAutoHide();
+    });
+
+    inputEl.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+
+      shuffleInPlace(files);
+      const picked = files.slice(0, CFG.playerCount);
+
+      rosterImgs = [];
+      for (const f of picked) {
+        try { rosterImgs.push(await fileToP5Image(f)); }
+        catch (err) { console.warn('Failed loading', f.name, err); }
+      }
+
+      showLoadPanel(false);
+      resetSim();
+      armAutoHide();
+    });
+
+    // Tap background to pause/resume; top-left tap reveals UI when hidden
+    document.body.addEventListener('click', (e) => {
+      if (panelEl.style.display !== 'none') return;
+
+      if (uiHidden) {
+        const x = e.clientX || 0, y = e.clientY || 0;
+        if (x < 90 && y < 90) { setUIHidden(false, true); armAutoHide(); }
+        return;
+      }
+
+      togglePause();
+      bumpControls();
+    }, { passive: true });
+
+    // Stop propagation for control taps
+    for (const el of document.querySelectorAll('button, label.btn')) {
+      el.addEventListener('click', (ev) => ev.stopPropagation());
+      el.addEventListener('touchstart', (ev) => ev.stopPropagation(), { passive: true });
+    }
+
+    // Start with panel visible
+    showLoadPanel(true);
+  }
+
+  function togglePause() { paused = !paused; }
+
+  function showLoadPanel(show) {
+    panelEl.style.display = show ? 'block' : 'none';
+    if (show) setUIHidden(false, false);
+    if (inputEl) inputEl.value = '';
+  }
+
+  function armAutoHide() {
+    if (hideTimer) clearTimeout(hideTimer);
+    setUIHidden(false, false);
+    hideTimer = setTimeout(() => setUIHidden(true, true), 2200);
+  }
+
+  function bumpControls() {
+    if (hideTimer) clearTimeout(hideTimer);
+    setUIHidden(false, false);
+    hideTimer = setTimeout(() => setUIHidden(true, true), 1800);
+  }
+
+  function setUIHidden(hidden, toast) {
+    uiHidden = hidden;
+    if (hidden) {
+      hudEl.classList.add('hidden');
+      controlsEl.classList.add('hidden');
+      if (toast) showToast();
+    } else {
+      hudEl.classList.remove('hidden');
+      controlsEl.classList.remove('hidden');
+      hideToast();
+    }
+  }
+
+  function showToast() {
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 1400);
+  }
+  function hideToast() { toastEl.classList.remove('show'); }
+
+  function fileToP5Image(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      loadImage(url,
+        (img) => { URL.revokeObjectURL(url); resolve(img); },
+        (err) => { URL.revokeObjectURL(url); reject(err); }
+      );
+    });
+  }
+
+  function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = floor(random(i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  }
+
+  // ---------------- SIM ----------------
+  function resetSim() {
+    players = []; projectiles = []; particles = []; frameShake = 0;
+
+    zorb.x = width * 0.5;
+    zorb.y = height * CFG.robotY;
+    zorb.aimX = zorb.x;
+    zorb.aimY = height * 0.5;
+    zorb.charge = 0;
+    zorb.recoil = 0;
+    zorb.fireCooldown = 0;
+
+    countdownFrames = max(1, floor(CFG.countdownSec * 60));
+
+    // grid-ish start (avoids immediate overlaps)
+    const topBound = height * 0.30;
+    const areaH = height - topBound - 40;
+    const cols = 5, rows = 10;
+    const cellW = width / cols;
+    const cellH = areaH / rows;
+
+    for (let i = 0; i < CFG.playerCount; i++) {
+      const r = random(CFG.bubbleMinR, CFG.bubbleMaxR);
+      const cx = (i % cols) * cellW + cellW * 0.5;
+      const cy = topBound + floor(i / cols) * cellH + cellH * 0.5;
+
+      const x = constrain(cx + random(-cellW*0.25, cellW*0.25), r + 12, width - r - 12);
+      const y = constrain(cy + random(-cellH*0.25, cellH*0.25), topBound + r + 8, height - r - 14);
+
+      players.push(new Bubble(i + 1, x, y, r, rosterImgs[i] || null));
+    }
+
+    updateHud();
+  }
+
+  function draw() {
+    if (!paused) stepSimulation();
+    renderScene();
+    updateHud();
+  }
+
+  function stepSimulation() {
+    zorb.recoil *= 0.86;
+    for (const s of stars) s.tw += s.sp;
+
+    for (const b of players) b.update();
+
+    // Separate overlaps
+    for (let i = 0; i < players.length; i++) {
+      for (let j = i + 1; j < players.length; j++) players[i].separate(players[j]);
+    }
+
+    // Update projectiles and particles
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      projectiles[i].update();
+      if (projectiles[i].dead) projectiles.splice(i, 1);
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+      particles[i].update();
+      if (particles[i].dead) particles.splice(i, 1);
+    }
+
+    // Countdown gate
+    if (countdownFrames > 0) {
+      countdownFrames -= 1;
+      return;
+    }
+
+    // Fire control
+    zorb.fireCooldown -= deltaTime / 1000;
+    if (zorb.fireCooldown <= 0 && players.length > 1) {
+      let rate = CFG.fireRate;
+      if (players.length <= 5) rate = CFG.fireRateFinal;
+      if (players.length <= 2) rate = CFG.fireRateFinal2;
+
+      // suspense hold when <=5
+      if (players.length <= 5 && frameCount % CFG.slowMoFrames < 10) {
+        // do nothing
+      } else {
+        if (zorb.charge <= 0) {
+          zorb.charge = CFG.chargeTime;
+          const t = pickTarget();
+          zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
+          zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
+
+          if (random() < CFG.nearMissChance * CFG.chaos) {
+            zorb.aimX += random([-1, 1]) * random(40, 80);
+            zorb.aimY += random(20, 60);
+          }
+        }
+        zorb.charge -= 1;
+        if (zorb.charge <= 0) {
+          fireShot();
+          zorb.fireCooldown = 1 / (rate * CFG.chaos);
+        }
+      }
+    }
+
+    if (players.length === 1) players[0].winner = true;
+  }
+
+  function pickTarget() {
+    if (players.length > 12) return random(players);
+    let best = players[0], bestScore = -1e9;
+    for (const b of players) {
+      const centerBias = -dist(b.x, b.y, width*0.5, height*0.62);
+      const motion = b.v.mag() * 120;
+      const score = centerBias + motion + random(-50, 50);
+      if (score > bestScore) { bestScore = score; best = b; }
+    }
+    return best;
+  }
+
+  function fireShot() {
+    const origin = random(cannonOrigins());
+    const dir = createVector(zorb.aimX - origin.x, zorb.aimY - origin.y).normalize();
+    const speed = CFG.projectileSpeed * (0.85 + 0.3 * CFG.chaos);
+    const vel = dir.mult(speed);
+
+    const piercing = random() < CFG.multiElimChance * CFG.chaos;
+    const ricochet = random() < CFG.ricochetChance * CFG.chaos;
+
+    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
+
+    zorb.recoil = 1.0;
+    frameShake = max(frameShake, CFG.screenShake * (players.length <= 5 ? 1.1 : 0.8));
+  }
+
+  function cannonOrigins() {
+    const sx = CFG.robotScale;
+    const imgW = (zorbLoaded && zorbImg) ? zorbImg.width * sx : 420 * sx;
+    const imgH = (zorbLoaded && zorbImg) ? zorbImg.height * sx : 420 * sx;
+
+    const hoverY = sin(frameCount * CFG.robotHoverSpeed) * CFG.robotHoverAmp;
+    const left = zorb.x - imgW * 0.5;
+    const top  = (zorb.y + hoverY) - imgH * 0.5;
+
+    const y = top + imgH * 0.78;
+    return [
+      { x: left + imgW * 0.36, y },
+      { x: left + imgW * 0.50, y },
+      { x: left + imgW * 0.64, y },
+    ];
+  }
+
+  // ---------------- RENDER ----------------
+  function renderScene() {
+    let sx = 0, sy = 0;
+    if (frameShake > 0 && !paused) {
+      sx = random(-frameShake, frameShake);
+      sy = random(-frameShake, frameShake);
+      frameShake *= 0.86;
+    }
+
+    push();
+    translate(sx, sy);
+
+    background(CFG.bgColor);
+    drawStars();
+    if (CFG.vignette) drawVignette();
+
+    // projectiles behind bubbles looks better
+    for (const p of projectiles) p.draw();
+    for (const b of players) b.draw();
+    drawZorb();
+    for (const pt of particles) pt.draw();
+
+    if (players.length === 1) drawWinner(players[0]);
+    if (countdownFrames > 0) drawCountdown();
+
+    pop();
+  }
+
+  function drawStars() {
+    noStroke();
+    for (const s of stars) {
+      const tw = (sin(s.tw) * 0.5 + 0.5);
+      fill(180, 200, 255, 80 + tw * 175);
+      circle(s.x, s.y, s.r);
+    }
+  }
+
+  function drawVignette() {
+    noFill();
+    for (let i = 0; i < 14; i++) {
+      stroke(0, 0, 0, 14);
+      rect(-i, -i, width + 2*i, height + 2*i, 22);
+    }
+  }
+
+  function drawZorb() {
+    const hoverY = sin(frameCount * CFG.robotHoverSpeed) * CFG.robotHoverAmp;
+    const scaleAmt = CFG.robotScale * (1 + zorb.recoil * 0.01);
+
+    // glow halo
+    const halo = 40 + (CFG.chargeTime - zorb.charge) * 2;
+    noStroke();
+    fill(255, 0, 200, zorb.charge > 0 ? 60 : 28);
+    circle(zorb.x, zorb.y + hoverY, halo * 2);
+
+    // image
+    imageMode(CENTER);
+    if (zorbLoaded && zorbImg && zorbImg.width) {
+      if (zorb.charge > 0) {
+        push();
+        tint(255, 255, 255, 210);
+        image(zorbImg, zorb.x, zorb.y + hoverY, zorbImg.width * scaleAmt * 1.01, zorbImg.height * scaleAmt * 1.01);
+        pop();
+      }
+      image(zorbImg, zorb.x, zorb.y + hoverY, zorbImg.width * scaleAmt, zorbImg.height * scaleAmt);
+    } else {
+      // placeholder if missing
+      push();
+      translate(zorb.x, zorb.y + hoverY);
+      noStroke();
+      fill(80, 240, 220, 210);
+      ellipse(0, 0, 240, 90);
+      fill(255, 0, 200, 55);
+      ellipse(0, 0, 290, 120);
+      pop();
+    }
+
+    // cannon glows
+    for (const o of cannonOrigins()) {
+      const glow = zorb.charge > 0 ? map(zorb.charge, CFG.chargeTime, 0, 20, 130) : 18;
+      noStroke();
+      fill(255, 220, 0, glow);
+      circle(o.x, o.y, 14);
+    }
+  }
+
+  function drawCountdown() {
+    const secLeft = ceil(countdownFrames / 60);
+    noStroke();
+    fill(0, 0, 0, 110);
+    rect(0, 0, width, height);
+
+    fill(255, 255, 255, 240);
+    textAlign(CENTER, CENTER);
+    textSize(54);
+    text(secLeft, width * 0.5, height * 0.50);
+
+    textSize(16);
+    fill(255, 255, 255, 220);
+    text("Zorbblez begins…", width * 0.5, height * 0.56);
+  }
+
+  function drawWinner(b) {
+    noStroke();
+    fill(0, 0, 0, 120);
+    rect(0, 0, width, height);
+
+    const cx = width * 0.5;
+    const cy = height * 0.52;
+    const R  = min(width, height) * 0.23;
+    const pulse = sin(frameCount * 0.06) * 0.5 + 0.5;
+
+    noStroke();
+    fill(120, 220, 255, 30 + pulse*40);
+    circle(cx, cy, R*2.45 + pulse*24);
+
+    stroke(190, 245, 255, 140);
+    strokeWeight(5);
+    fill(255, 255, 255, 14);
+    circle(cx, cy, R*2);
+
+    // glass highlight
+    noStroke();
+    fill(255, 255, 255, 58);
+    ellipse(cx - R*0.28, cy - R*0.32, R*1.05, R*0.68);
+
+    // image clipped in circle
+    if (b.img) drawClippedImageCircle(b.img, cx, cy, R*1.62);
+    else {
+      fill(255,255,255,230);
+      textAlign(CENTER, CENTER);
+      textSize(R*0.7);
+      text(b.id, cx, cy+6);
+    }
+
+    textAlign(CENTER, CENTER);
+    noStroke();
+    fill(255,255,255,240);
+    textSize(34);
+    text("WINNER!", cx, height * 0.18);
+
+    fill(255,255,255,220);
+    textSize(16);
+    text("Follow + comment to enter tomorrow’s round", cx, height * 0.22);
+
+    // subtle end-card footer
+    fill(0,0,0,110);
+    stroke(255,255,255,30);
+    rect(width*0.12, height*0.82, width*0.76, 56, 16);
+    noStroke();
+    fill(255,255,255,220);
+    textSize(12);
+    text("Zorbblez • The Zorb decides.", cx, height*0.82 + 28);
+  }
+
+  function drawClippedImageCircle(img, x, y, d) {
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, d/2, 0, Math.PI * 2);
+    ctx.clip();
+
+    const imgAR = img.width / img.height;
+    let dw, dh;
+    if (imgAR > 1) { dh = d; dw = d * imgAR; }
+    else { dw = d; dh = d / imgAR; }
+    imageMode(CENTER);
+    image(img, x, y, dw, dh);
+
+    ctx.restore();
+  }
+
+  // ---------------- ENTITIES ----------------
+  class Bubble {
+    constructor(id, x, y, r, img) {
+      this.id = id;
+      this.x = x; this.y = y; this.r = r;
+      this.img = img;
+      this.v = createVector(random(-1, 1), random(-1, 1)).mult(random(0.5, 1.35));
+      this.wob = random(TAU);
+      this.wobSp = random(0.02, 0.05);
+      this.winner = false;
+    }
+
+    update() {
+      const f = p5.Vector.random2D().mult(CFG.wanderForce * CFG.chaos);
+      this.v.add(f);
+
+      const maxV = CFG.maxSpeed * (0.85 + 0.35 * CFG.chaos);
+      if (this.v.mag() > maxV) this.v.setMag(maxV);
+
+      this.x += this.v.x;
+      this.y += this.v.y;
+
+      const topBound = height * 0.28;
+      if (this.x < this.r) { this.x = this.r; this.v.x *= -1; }
+      if (this.x > width - this.r) { this.x = width - this.r; this.v.x *= -1; }
+      if (this.y < topBound + this.r) { this.y = topBound + this.r; this.v.y *= -1; }
+      if (this.y > height - this.r) { this.y = height - this.r; this.v.y *= -1; }
+
+      this.v.mult(CFG.bounceDamping);
+      this.wob += this.wobSp;
+    }
+
+    separate(other) {
+      const dx = other.x - this.x, dy = other.y - this.y;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      const minD = this.r + other.r + 6;
+      if (d > 0 && d < minD) {
+        const overlap = (minD - d) / minD;
+        const push = overlap * CFG.separationStrength * (1 + 0.3 * CFG.chaos);
+        const nx = dx / d, ny = dy / d;
+
+        this.x -= nx * push * 40; this.y -= ny * push * 40;
+        other.x += nx * push * 40; other.y += ny * push * 40;
+
+        this.v.x -= nx * push * 1.2; this.v.y -= ny * push * 1.2;
+        other.v.x += nx * push * 1.2; other.v.y += ny * push * 1.2;
+      }
+    }
+
+    draw() {
+      push();
+      translate(this.x, this.y);
+
+      const wobble = 1 + sin(this.wob) * 0.03;
+
+      // outer glow
+      noStroke();
+      fill(120, 220, 255, 24);
+      circle(0, 0, this.r*2 + CFG.bubbleGlow);
+
+      // bubble rim + glass fill
+      stroke(190, 245, 255, 110);
+      strokeWeight(3);
+      fill(255, 255, 255, 14);
+      ellipse(0, 0, this.r*2*wobble, this.r*2*(2-wobble));
+
+      // inner content
+      if (this.img) drawClippedImageCircle(this.img, 0, 2, this.r*1.55);
+      else {
+        noStroke();
+        fill(255, 255, 255, 210);
+        textAlign(CENTER, CENTER);
+        textSize(this.r*0.6);
+        text(this.id, 0, 6);
+      }
+
+      // highlight
+      noStroke();
+      fill(255, 255, 255, 55);
+      ellipse(-this.r*0.28, -this.r*0.32, this.r*0.85, this.r*0.55);
+
+      pop();
+    }
+  }
+
+  class Projectile {
+    constructor(x, y, vx, vy, piercing=false, ricochet=false) {
+      this.x = x; this.y = y;
+      this.v = createVector(vx, vy);
+      this.r = CFG.projectileRadius;
+      this.dead = false;
+      this.piercing = piercing;
+      this.ricochet = ricochet;
+      this.hasRicocheted = false;
+    }
+
+    update() {
+      this.x += this.v.x;
+      this.y += this.v.y;
+
+      if (this.y > height + 120 || this.x < -120 || this.x > width + 120) {
+        this.dead = true;
+        return;
+      }
+
+      // collision with bubbles
+      for (let i = players.length - 1; i >= 0; i--) {
+        const b = players[i];
+        if (dist(this.x, this.y, b.x, b.y) < b.r + this.r) {
+          popBubble(b);
+          players.splice(i, 1);
+
+          if (!this.piercing) {
+            this.dead = true;
+          } else {
+            this.r *= 0.92;
+            this.v.mult(0.92);
+            if (this.r < 6) this.dead = true;
+          }
+
+          if (this.ricochet && !this.hasRicocheted && !this.dead) {
+            this.hasRicocheted = true;
+            const nv = p5.Vector.random2D().mult(CFG.projectileSpeed*0.85);
+            nv.y = abs(nv.y) + 6; // keep moving downward-ish
+            this.v = nv;
+          }
+          break;
+        }
+      }
+    }
+
+    draw() {
+      // glow aura
+      noStroke();
+      fill(255, 120, 0, 55);
+      circle(this.x, this.y, this.r*4.4);
+
+      // core
+      fill(255, 240, 120, 220);
+      circle(this.x, this.y, this.r*1.8);
+
+      // streak
+      stroke(255, 255, 255, 70);
+      strokeWeight(3);
+      line(this.x, this.y, this.x - this.v.x*2.0, this.y - this.v.y*2.0);
+    }
+  }
+
+  class Particle {
+    constructor(x, y, vx, vy, life, kind='spark') {
+      this.x = x; this.y = y;
+      this.v = createVector(vx, vy);
+      this.life = life;
+      this.maxLife = life;
+      this.kind = kind;
+      this.dead = false;
+      this.r = (kind === 'pop') ? random(3, 7) : random(2, 4);
+    }
+    update() {
+      this.x += this.v.x;
+      this.y += this.v.y;
+      this.v.mult(0.93);
+      this.life -= 1;
+      if (this.life <= 0) this.dead = true;
+    }
+    draw() {
+      const a = map(this.life, 0, this.maxLife, 0, 255);
+      noStroke();
+      if (this.kind === 'pop') fill(255, 255, 255, a);
+      else fill(255, 80, 240, a);
+      circle(this.x, this.y, this.r);
+    }
+  }
+
+  function popBubble(b) {
+    frameShake = max(frameShake, CFG.screenShake * (players.length <= 5 ? 1.2 : 1.0));
+
+    // sparks + pops
+    for (let i = 0; i < CFG.popParticles; i++) {
+      const v = p5.Vector.random2D().mult(random(2.5, 8.5));
+      v.y += 1.2;
+      particles.push(new Particle(b.x, b.y, v.x, v.y, CFG.sparkLife, 'spark'));
+    }
+    for (let i = 0; i < 10; i++) {
+      const v = p5.Vector.random2D().mult(random(1.2, 6.2));
+      particles.push(new Particle(b.x, b.y, v.x, v.y, CFG.popLife, 'pop'));
+    }
+  }
+
+  function updateHud() {
+    const roster = rosterImgs.length ? `${rosterImgs.length} img` : `numbers`;
+    const z = zorbLoaded ? `ok` : `MISSING zorb.png`;
+    const cd = (countdownFrames > 0) ? ` • starts in ${ceil(countdownFrames/60)}s` : '';
+    statusEl.innerHTML =
+      `Zorb: <b>${z}</b> • Roster: <b>${roster}</b> • Remaining: <b>${players.length}</b> • Chaos: <b>${CFG.chaos.toFixed(2)}</b>${cd}` +
+      (paused ? ` • <b>PAUSED</b>` : ``);
+  }
+  </script>
+</body>
+</html>
