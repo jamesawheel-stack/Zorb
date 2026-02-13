@@ -411,14 +411,23 @@
   function togglePause(){ if(simState !== "setup") paused = !paused; }
 
   function beginCountdown(){
-    unlockAudioOnce();
-    requestWakeLock();
-    showPanel(false);
-    paused=false;
-    simState="countdown";
-    countdownFrames = max(1, floor(CFG.countdownSec*60));
-    armAutoHide();
-  }
+  unlockAudioOnce();
+  requestWakeLock();
+
+  // Hide panel + UI immediately
+  showPanel(false);
+  setUIHidden(true);
+
+  paused = false;
+
+  // Small cinematic delay so recording starts clean
+  setTimeout(() => {
+    simState = "countdown";
+    countdownFrames = max(1, floor(CFG.countdownSec * 60));
+
+    if (recEnabled) startRecording();
+  }, 200);
+}
 
   function showUI(withToast){ setUIHidden(false); if(withToast) toastPulse(); }
   function setUIHidden(hidden){ uiHidden=hidden; hudEl.classList.toggle('hidden', hidden); controlsEl.classList.toggle('hidden', hidden); }
