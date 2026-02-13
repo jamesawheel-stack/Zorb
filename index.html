@@ -361,19 +361,38 @@
     window.addEventListener('focus', ()=> onReturnToApp());
 
     document.body.addEventListener('click', ()=>{
-      resumeAudioNow();
-      if(simState === 'running' || simState === 'countdown') requestWakeLock();
+  // Unlock audio context
+  if(!audioUnlocked){
+    userStartAudio();
+    audioUnlocked = true;
 
-      if(!panelEl.classList.contains('hidden')) return;
+    // Start looping music immediately
+    if(sfxMusic){
+      try{
+        sfxMusic.setLoop(true);
+        sfxMusic.setVolume(0);
+        sfxMusic.play();
+        sfxMusic.amp(0.28, 1.2); // fade in
+      }catch(_){}
+    }
+  }
 
-      if(uiHidden){
-        showUI(true);
-        return;
-      }
+  resumeAudioNow();
 
-      togglePause();
-      bumpUI();
-    }, { passive:true });
+  // existing logic
+  if(simState === 'running' || simState === 'countdown') requestWakeLock();
+
+  if(!panelEl.classList.contains('hidden')) return;
+
+  if(uiHidden){
+    showUI(true);
+    bumpUI();
+    return;
+  }
+
+  togglePause();
+  bumpUI();
+}, { passive:true });
 
     for(const el of document.querySelectorAll('button, label.btn')){
       el.addEventListener('click', (ev)=>ev.stopPropagation());
