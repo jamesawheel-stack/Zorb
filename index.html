@@ -366,6 +366,7 @@ multiElimChance:0.08,
   //Final 5 elimination beings
   let final5Active = false;
   let final5UntilFrame = 0;
+  let final5Shown = false ;
     
   // Confetti (win moment)
   let confetti = [];
@@ -746,6 +747,10 @@ function beginCountdown(){
     players=[]; projectiles=[]; particles=[]; frameShake=0;
     extraDots=[]; paused=false; winnerPlayed=false;
 
+    final5Active = false;
+    final5UntilFrame = 0;
+    final5Shown = false;
+    
     confetti = [];
     confettiActive = false;
     confettiUntilFrame = 0;
@@ -886,8 +891,9 @@ function beginCountdown(){
     }
 
     // Final-5 overlay timer
-    if(final5Active && frameCount > final5UntilFrame){
-      final5Active = false;
+    if(players.length === 5 && !final5Shown) {
+      final5Shown = true;
+      triggerFinal5)overlay();
     }
 
     const remaining = totalRemaining();
@@ -1405,10 +1411,11 @@ function drawFinaleFrameGlow(){
 
 function drawFinal5Overlay(){
     if(final5Frames <= 0) return;
-
+    final5Frames--;
+  
     const t = final5Frames;
     const pulse = (sin(frameCount*0.18)*0.5+0.5);
-    const shake = map(t, 0, 90, 0, 6);
+    const shake = map(t, 90, 0, 6, 0);
     const dx = random(-shake, shake);
     const dy = random(-shake, shake);
 
