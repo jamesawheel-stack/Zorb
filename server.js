@@ -1,5 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
+import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
@@ -22,6 +23,13 @@ const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase()
 const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap (2..100)
 const MIN_PLAYERS = 2;
 
+// VIDEO STORAGE
+const VIDEO_BUCKET = (process.env.VIDEO_BUCKET || "zorbi-videos").trim();
+// If your bucket is PUBLIC, this can be "true". If it's private, we’ll generate a signed URL.
+const VIDEO_BUCKET_PUBLIC = String(process.env.VIDEO_BUCKET_PUBLIC || "true").toLowerCase() === "true";
+// Signed URL TTL seconds (only used if private)
+const VIDEO_SIGNED_TTL = Number(process.env.VIDEO_SIGNED_TTL || 60 * 60 * 24 * 7); // 7 days
+
 // ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.warn("⚠️ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -37,6 +45,7 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", GAME_ORIGIN);
     res.setHeader("Vary", "Origin");
   }
+  // NOTE: multipart/form-data uploads still use Content-Type header
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-key");
 
@@ -223,14 +232,12 @@ async function generateRound({ requestedMaxPlayers } = {}) {
         if (claimed_total >= MIN_PLAYERS) {
           mode = "live";
 
-          // NEW FINALE LOGIC: dynamic 2..PLAYER_COUNT_MAX, but also respect ?max=
+          // dynamic 2..PLAYER_COUNT_MAX, respect ?max=
           const finale_count = clampInt(Math.min(claimed_total, cap), MIN_PLAYERS, PLAYER_COUNT_MAX);
-
           players = livePlayers.slice(0, finale_count);
         }
       }
     } catch (err) {
-      // Fail gracefully into training
       mode = "training";
     }
   }
@@ -239,32 +246,81 @@ async function generateRound({ requestedMaxPlayers } = {}) {
   if (mode !== "live") {
     mode = "training";
     claimed_total = cap;
-
-    // NEW FINALE LOGIC: dynamic 2..PLAYER_COUNT_MAX
     const finale_count = clampInt(claimed_total, MIN_PLAYERS, PLAYER_COUNT_MAX);
-
     players = buildTrainingPlayers(finale_count);
   }
 
-  // Ensure finale_count matches actual players array length
   const finale_count = clampInt(players.length, MIN_PLAYERS, PLAYER_COUNT_MAX);
 
   const row = {
     round_date,
     mode,
-    status: "pending",          // ready for the game to run
-    claimed_total,            // total eligible (deduped) for the round
-    finale_count,             // dynamic finale (2..100) based on claimed_total
+    status: "pending",
+    claimed_total,
+    finale_count,
     seed,
-    post,                     // jsonb nullable
-    players,                  // jsonb array
-    winner: null,             // set by the game
-    winner_slot: null,        // set by the game
-    winner_set_at: null,      // set by the game
+    post,
+    players,
+    winner: null,
+    winner_slot: null,
+    winner_set_at: null,
+
+    // optional columns you mentioned:
+    video_url: null,
+    video_storage_path: null,
+    error_message: null,
   };
 
   await upsertRound(row);
   return row;
+}
+
+// ---------------- VIDEO UPLOAD (AUTO-RECORD) ----------------
+// Memory upload (no disk). Limit to ~80MB.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 80 * 1024 * 1024 },
+});
+
+async function storeVideoAndUpdateRound({ round_date, buffer, contentType }) {
+  const safeDate = round_date || todayIdUTC();
+  const path = `${safeDate}/zorbi-${safeDate}.webm`;
+
+  const up = await supabase.storage
+    .from(VIDEO_BUCKET)
+    .upload(path, buffer, {
+      contentType: contentType || "video/webm",
+      upsert: true,
+    });
+
+  if (up.error) throw new Error(`Storage upload failed: ${up.error.message}`);
+
+  let video_url = null;
+
+  if (VIDEO_BUCKET_PUBLIC) {
+    const pub = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(path);
+    video_url = pub?.data?.publicUrl || null;
+  } else {
+    const signed = await supabase.storage
+      .from(VIDEO_BUCKET)
+      .createSignedUrl(path, VIDEO_SIGNED_TTL);
+
+    if (signed.error) throw new Error(`Signed URL failed: ${signed.error.message}`);
+    video_url = signed?.data?.signedUrl || null;
+  }
+
+  const { error } = await supabase
+    .from("rounds")
+    .update({
+      video_storage_path: path,
+      video_url,
+      error_message: null,
+    })
+    .eq("round_date", safeDate);
+
+  if (error) throw new Error(`Round update failed: ${error.message}`);
+
+  return { video_storage_path: path, video_url };
 }
 
 // ---------------- ROUTES ----------------
@@ -284,6 +340,10 @@ app.get("/api/envcheck", (req, res) => {
     playerCountMax: PLAYER_COUNT_MAX,
     minPlayers: MIN_PLAYERS,
     gameOrigin: GAME_ORIGIN || null,
+
+    videoBucket: VIDEO_BUCKET,
+    videoBucketPublic: VIDEO_BUCKET_PUBLIC,
+    videoSignedTTL: VIDEO_SIGNED_TTL,
   });
 });
 
@@ -324,13 +384,11 @@ app.post("/admin/generate", async (req, res) => {
   }
 });
 
-// Game reads today’s round (kept name for compatibility)
+// Game reads today’s round
 app.get("/top50.json", async (req, res) => {
   try {
     let round = await getTodayRound();
-    if (!round) {
-      round = await generateRound(); // auto-generate if missing
-    }
+    if (!round) round = await generateRound();
     res.json(round);
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -366,6 +424,55 @@ app.post("/round/today/winner", async (req, res) => {
   }
 });
 
+// ✅ VIDEO UPLOAD: frontend posts recorded video here
+app.post("/round/today/video", upload.single("video"), async (req, res) => {
+  try {
+    const round_date = safeStr(req.body?.round_date, 32) || todayIdUTC();
+
+    if (!req.file?.buffer || !req.file?.size) {
+      return res.status(400).json({ ok: false, error: "No video file uploaded (field name must be 'video')" });
+    }
+
+    const contentType = req.file.mimetype || "video/webm";
+    const out = await storeVideoAndUpdateRound({
+      round_date,
+      buffer: req.file.buffer,
+      contentType,
+    });
+
+    res.json({ ok: true, round_date, ...out });
+  } catch (e) {
+    // try to persist error into rounds table
+    try {
+      await supabase
+        .from("rounds")
+        .update({ error_message: String(e?.message || e) })
+        .eq("round_date", todayIdUTC());
+    } catch (_) {}
+
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ QUICK CHECK: returns stored video url for today (if present)
+app.get("/round/today/video", async (req, res) => {
+  try {
+    const round = await getTodayRound();
+    if (!round) return res.status(404).json({ ok: false, error: "No round for today" });
+
+    res.json({
+      ok: true,
+      round_date: round.round_date,
+      video_url: round.video_url || null,
+      video_storage_path: round.video_storage_path || null,
+      error_message: round.error_message || null,
+      status: round.status || null,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // Leaderboard JSON
 app.get("/leaderboard.json", async (req, res) => {
   const { data, error } = await supabase
@@ -389,30 +496,54 @@ app.get("/leaderboard.json", async (req, res) => {
   res.json(sorted);
 });
 
-// IG bio helper
+// IG bio helper (full 5-line bio + reigning leader w/ win count)
 app.get("/bio.txt", async (req, res) => {
-  const { data, error } = await supabase
-    .from("rounds")
-    .select("winner")
-    .not("winner", "is", null);
+  try {
+    const { data, error } = await supabase
+      .from("rounds")
+      .select("winner")
+      .not("winner", "is", null);
 
-  if (error) return res.status(500).send("Error");
+    if (error) return res.status(500).send("Error");
 
-  const counts = {};
-  for (const r of data || []) {
-    const w = r.winner;
-    if (!w) continue;
-    counts[w] = (counts[w] || 0) + 1;
+    // Count wins per winner
+    const counts = {};
+    for (const r of data || []) {
+      const w = (r.winner || "").trim();
+      if (!w) continue;
+      counts[w] = (counts[w] || 0) + 1;
+    }
+
+    // Top 1 winner (reigning leader)
+    let leader = null;
+    let leaderWins = 0;
+
+    const entries = Object.entries(counts);
+    if (entries.length) {
+      entries.sort((a, b) => b[1] - a[1]);
+      leader = entries[0][0] || null;
+      leaderWins = Number(entries[0][1] || 0);
+    }
+
+    // Ensure exactly one @ prefix
+    const leaderTag = leader
+      ? "@" + String(leader).replace(/^@+/, "")
+      : "TBD";
+
+    const winsText = leader ? ` (${leaderWins})` : "";
+
+    const bio =
+`🫧 Only 1 bubble survives
+🤖 Arcade elimination game
+⚡ New round daily
+👇 Comment “IN” to enter
+🏆 Reigning Leader: ${leaderTag}${winsText}`;
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.send(bio);
+  } catch (e) {
+    res.status(500).send("Error");
   }
-
-  const top = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([h, c]) => `@${h}(${c})`)
-    .join(" • ");
-
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.send(`🏆 Top: ${top || "TBD"}`);
 });
 
 app.listen(PORT, () => console.log("Listening on", PORT));
