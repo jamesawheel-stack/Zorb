@@ -192,7 +192,7 @@
   }
 
   let audioUnlocked=false;
-  let sfxPop=[], sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension;
+  let sfxPop=[], sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension, sfxMusic;
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
   let reloadTimer=null;
 
@@ -279,6 +279,7 @@
     sfxBass    = loadSound('bass.wav');
     sfxWoosh   = loadSound('woosh.wav');
     sfxTension = loadSound('tension.wav');
+    sfxMusic = loadSound('music_loop.mp3');
   }
 
   async function setup(){
@@ -389,6 +390,7 @@
 
   function beginCountdown(){
     unlockAudioOnce();
+    setMusicOn(true);
     requestWakeLock();
 
     showPanel(false);
@@ -430,6 +432,14 @@
     userStartAudio();
     audioUnlocked = true;
     resumeAudioNow();
+    try{
+      if(sfxMusic){
+        sfxMusic.setLoop(true);
+        sfxMusic.setvolume(0); //start silent and fade in
+        if(!sfxMusic.isPlaying()) sfxMusic.play();
+      }
+    }catch(_){}
+    
     if(sfxTension){
       sfxTension.setLoop(true);
       sfxTension.setVolume(0);
@@ -438,6 +448,19 @@
     updatePanelStatusThrottled(true);
   }
 
+  function setMusicOn(on){
+    if(!sfxMusic) return;
+    const target = on ? 0.28 : 0.0; // <-- change 0.28 (first number to taste)
+    const secs = on ? 1.2 : 0.6;
+    try{
+      if(on && !sfxmusic.isPlaying()){
+        sfxMusic.setLopp(true);
+        sfxMusic.play();
+      }
+      sfxMusic.amp(target, secs); //smooth fade
+    }catch(_){}
+  }
+    
   function playOne(snd, vol){
     if(!audioUnlocked || !snd) return;
     snd.setVolume(SFX.master * vol);
@@ -624,6 +647,7 @@
       simState="finished";
       if(!winnerPlayed){
         playOne(sfxWinner, SFX.winner);
+        setMusicOn(false);
         winnerPlayed=true;
 
         spawnConfetti();
