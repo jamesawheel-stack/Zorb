@@ -195,9 +195,17 @@
   let sfxPop=[], sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension, sfxMusic;
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
   let reloadTimer=null;
+  let musicStarted = false;
 
   const SFX={ master:0.90, pop:0.65, fire:0.65, reload:0.45, bass:0.75, woosh:0.55, tensionMax:0.55, winner:0.95 };
-
+  const MUSIC = {
+    peak: 0.55,
+    bed: 0.18,
+    fadeInMs: 900,
+    fadeDownMs: 1200,
+    holdMs: 1200
+  };
+    
   let zorbImg, zorbLoaded=false;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
@@ -365,19 +373,27 @@
   if(!audioUnlocked){
     userStartAudio();
     audioUnlocked = true;
-
-    // Start looping music immediately
-    if(sfxMusic){
-      try{
-        sfxMusic.setLoop(true);
-        sfxMusic.amp(0);
-        sfxMusic.play();
-        sfxMusic.amp(0.28, 1.2); // fade in
-      }catch(_){}
-    }
   }
 
   resumeAudioNow();
+      
+  //Start background music ON FIRST TAP ONLY
+  if (!musicStarted && sfxMusic) {
+    musicStarted = true;
+
+    sfxMusic.setVolume(0);
+    sfxMusic.setloop(true);
+
+    try { sfxMusic.play(); } catch(_) {}
+
+    //fade up
+    sfxMusic.amp(0.55, 1.0);
+
+    //then fade down to bed
+    setTimeout(() => {
+      sfxMusic.amp(0.18, 1.4);
+    }, 2200);
+  }
 
   // existing logic
   if(simState === 'running' || simState === 'countdown') requestWakeLock();
