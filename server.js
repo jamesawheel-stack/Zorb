@@ -399,14 +399,14 @@ app.get("/bio.txt", async (req, res) => {
 
     res.send(
 `🫧 Only 1 bubble survives.
-🤖 Daily arcade elimination arena
+🤖 Daily arcade elimination arena @ 8pm EST
 🏆 Latest winner: ${latestWinner}
 👇 Follow + comment “IN” to enter`
     );
   } catch (e) {
     res.send(
 `🫧 Only 1 bubble survives.
-🤖 Daily Arcade elimination arena
+🤖 Daily Arcade elimination arena @ 8pm EST
 🏆 Latest winner: TBD
 👇 Follow + comment “IN” to enter`
     );
