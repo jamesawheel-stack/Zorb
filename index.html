@@ -119,7 +119,6 @@
       <span class="pill" id="panelZorb">Zorb: …</span>
       <span class="pill" id="panelAudio">Audio: …</span>
       <span class="pill" id="panelBackend">Backend: …</span>
-      <span class="pill" id="panelVideo">Video: …</span>
     </div>
 
     <div class="note">Tip: after you press Start, the UI auto-hides in ~2s for clean recording.</div>
@@ -149,17 +148,8 @@
 
   const ROUND_URL        = BACKEND_BASE + "/top50.json";
   const WINNER_URL       = BACKEND_BASE + "/round/today/winner";
-  const VIDEO_UPLOAD_URL = BACKEND_BASE + "/api/round/today/video";
 
   let UPLOAD_TOKEN = null;
-
-  // -------- Auto recording --------
-  let recEnabled = !(/iPad|iPhone|iPod/.test(navigator.userAgent)); // disable on iOS (stability + no audio capture)
-  let recAutoUpload = true;
-  let recording = false;
-  let mediaRecorder = null;
-  let recChunks = [];
-  let lastVideoUrl = null;
 
   let ROUND_META = { round_date:null, mode:null, claimed_total:null, finale_count:null, status:null, seed:null, video_url:null };
   let BACKEND_WINNER = null;
@@ -284,7 +274,6 @@
         finale_count: round?.finale_count ?? finalCount,
         status: round?.status || null,
         seed: round?.seed ?? null,
-        video_url: round?.video_url || null
       };
 
       UPLOAD_TOKEN = round?.upload_token || null;
@@ -366,10 +355,7 @@
     panelZorbEl = document.getElementById('panelZorb');
     panelAudioEl = document.getElementById('panelAudio');
     panelBackendEl = document.getElementById('panelBackend');
-    panelVideoEl = document.getElementById('panelVideo');
 
-    btnRecEl = document.getElementById('btnRec');
-    btnAutoUpEl = document.getElementById('btnAutoUp');
     startBtnEl = document.getElementById('startBtn');
 
     document.getElementById('btnShowPanel').addEventListener('click', ()=>{ showPanel(true); showUI(true); });
@@ -378,19 +364,6 @@
     document.getElementById('btnChaosDown').addEventListener('click', ()=>{ CFG.chaos = max(0.35, CFG.chaos-0.15); bumpUI(); });
     document.getElementById('btnChaosUp').addEventListener('click', ()=>{ CFG.chaos = min(3.0, CFG.chaos+0.15); bumpUI(); });
     document.getElementById('btnHide').addEventListener('click', ()=>{ setUIHidden(true); });
-
-    btnRecEl.addEventListener('click', async ()=>{
-      recEnabled = !recEnabled;
-      if(!recEnabled && recording) await stopRecording(false);
-      bumpUI();
-      updatePanelStatusThrottled(true);
-    });
-
-    btnAutoUpEl.addEventListener('click', ()=>{
-      recAutoUpload = !recAutoUpload;
-      bumpUI();
-      updatePanelStatusThrottled(true);
-    });
 
     document.getElementById('clearBtn').addEventListener('click', ()=>{
       resetSim(true);
@@ -1248,122 +1221,6 @@ function syncFinalGlowToCanvas(){
 
   return false;
 }
-
-  // -------- recording helpers --------
-  function pickMimeType(){
-    if(!window.MediaRecorder) return null;
-    const types=[
-      "video/mp4;codecs=avc1.42E01E",
-      "video/mp4",
-      "video/webm;codecs=vp9",
-      "video/webm;codecs=vp8",
-      "video/webm"
-    ];
-    for(const t of types){
-      try{ if(MediaRecorder.isTypeSupported(t)) return t; }catch(_){}
-    }
-    return "";
-  }
-
-  function safeFilename(ext){
-    const d = (ROUND_META?.round_date || new Date().toISOString().slice(0,10)).replaceAll("-","");
-    return `zorbi_${d}.${ext}`;
-  }
-
-  async function startRecording(){
-    try{
-      if(!window.MediaRecorder) return;
-      if(recording || !recEnabled) return;
-
-      const cnv = document.querySelector("canvas");
-      if(!cnv || !cnv.captureStream) return;
-
-      const videoStream = cnv.captureStream(30);
-
-      // Try to add WebAudio to the recording (works best on desktop Chrome/Edge; iOS often blocks this)
-      let mixedStream = videoStream;
-      try {
-        const ctx = getAudioContext?.();
-        if (ctx && window.p5 && window.p5.soundOut && window.p5.soundOut.output) {
-          const dest = ctx.createMediaStreamDestination();
-          // Connect master output -> MediaStreamDestination (do NOT disconnect from speakers)
-          window.p5.soundOut.output.connect(dest);
-          mixedStream = new MediaStream([
-            ...videoStream.getVideoTracks(),
-            ...dest.stream.getAudioTracks(),
-          ]);
-        }
-      } catch (e) { /* ignore */ }
-
-      const mimeType = pickMimeType();
-      const opts = { mimeType, videoBitsPerSecond: 2_500_000 };
-
-      recChunks=[];
-      mediaRecorder = new MediaRecorder(mixedStream, opts);
-      mediaRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size) recChunks.push(e.data); };
-      mediaRecorder.start(1000);
-      recording=true;
-
-      btnRecEl?.classList.add("recOn");
-      updatePanelStatusThrottled(true);
-    }catch(e){
-      console.warn("Recording start failed:", e);
-    }
-  }
-
-  async function stopRecording(captureWinnerHold=true){
-    if(!recording || !mediaRecorder) return;
-
-    if(captureWinnerHold) await new Promise(r=>setTimeout(r, 1200));
-
-    try{ mediaRecorder.stop(); }catch(_){}
-    recording=false;
-    btnRecEl?.classList.remove("recOn");
-
-    const mime = mediaRecorder.mimeType || pickMimeType() || "video/webm";
-    const blob = new Blob(recChunks, { type:mime });
-    const ext = mime.includes("mp4") ? "mp4" : "webm";
-
-    mediaRecorder=null;
-    recChunks=[];
-
-    if(!blob || blob.size < 1024){ updatePanelStatusThrottled(true); return; }
-
-    if(lastVideoUrl) URL.revokeObjectURL(lastVideoUrl);
-    lastVideoUrl = URL.createObjectURL(blob);
-
-    if(recAutoUpload){
-      await uploadVideo(blob, safeFilename(ext));
-    }else{
-      toastEl.textContent = "Video ready (local). If upload is off, you’ll need to screen-save.";
-      toastPulse();
-    }
-
-    updatePanelStatusThrottled(true);
-  }
-
-  async function uploadVideo(blob, filename){
-    try{
-      const fd = new FormData();
-      fd.append("video", blob, filename);
-      fd.append("round_date", ROUND_META?.round_date || "");
-      if(UPLOAD_TOKEN) fd.append("token", UPLOAD_TOKEN);
-
-      const res = await fetch(VIDEO_UPLOAD_URL, { method:"POST", body: fd });
-      const data = await res.json().catch(()=>({}));
-      if(!res.ok || !data?.ok) throw new Error(data?.error || ("HTTP "+res.status));
-
-      if(data.video_url){
-        ROUND_META.video_url = data.video_url;
-        toastEl.textContent = "Uploaded • video ready on backend";
-        toastPulse();
-      }
-    }catch(e){
-      console.warn("Upload failed:", e);
-      toastEl.textContent = "Upload failed • (backend route missing). Video kept locally only.";
-      toastPulse();
-    }
-  }
 
   function updatePanelStatus(){
     panelRosterEl.textContent = `Roster: ${CFG.playerCount} entrants`;
