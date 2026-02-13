@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link rel="icon" type="image/png" href="Zorb2.PNG">
-  <title>Zorbi – Mobile Full v6.5</title>
+  <title>Zorbi – Mobile Full v7</title>
   <style>
     :root{
       --bg:#0B0F1F;
@@ -111,8 +111,6 @@
     <button class="btn wide" id="btnShowPanel" type="button">Roster</button>
     <button class="btn" id="btnPause" type="button">Pause</button>
     <button class="btn" id="btnRestart" type="button">Restart</button>
-    <button class="btn small" id="btnChaosDown" type="button">–</button>
-    <button class="btn small" id="btnChaosUp" type="button">+</button>
     <button class="btn wide" id="btnHide" type="button">Hide UI</button>
   </div>
 
@@ -167,9 +165,7 @@
     aimJitter:16,
     projectileSpeed:16,
     projectileRadius:10,
-
-    chaos:1.0,
-    multiElimChance:0.08,
+multiElimChance:0.08,
     nearMissChance:0.10,
     ricochetChance:0.06,
 
@@ -183,6 +179,43 @@
 
     countdownSec:3,
   };
+  // ---------- Arena scaling (auto) ----------
+  let ARENA_START_COUNT = 0;       // set when we build the roster
+  let final5Triggered = false;
+  let final5Frames = 0;            // overlay frames for FINAL 5 alert
+  let lastCountdownSec = null;     // to play whoosh once per number
+
+  function arenaProgress(){
+    const start = Math.max(2, ARENA_START_COUNT || CFG.playerCount || 50);
+    const n = Math.max(1, players.length || start);
+    return 1 - ((n - 1) / (start - 1)); // 0..1
+  }
+
+  // mild intensity scaler (replaces manual "chaos")
+  function arenaChaos(){
+    const start = Math.max(2, ARENA_START_COUNT || CFG.playerCount || 50);
+    const density = Math.min(1, Math.max(0, (start - 30) / 70)); // 0..1
+    const prog = arenaProgress(); // 0..1
+    return 1.0 + 0.18 * density + 0.30 * prog; // ~1.0 .. ~1.48
+  }
+
+  // faster early pacing when many entrants, slows into finals
+  function arenaFireRate(){
+    const start = Math.max(2, ARENA_START_COUNT || CFG.playerCount || 50);
+    const n = players.length || start;
+
+    if(n <= 2) return CFG.fireRateFinal2;
+    if(n <= 5) return CFG.fireRateFinal;
+
+    // base "crowd" speed (shots/sec)
+    const base = 0.95 + Math.min(2.15, (start / 100) * 1.85); // up to ~3.1 at 100
+    const t = (n - 5) / Math.max(1, (start - 5));            // 0 (at 5) .. 1 (at start)
+    return CFG.fireRateFinal + (base - CFG.fireRateFinal) * t;
+  }
+
+  // keep bubbles inside the glowing frame
+  const ARENA_PAD = 22;
+
 
   function getDynamicBubbleSize(count){
     // Designed for 9:16 — at 100 bubbles they’re intentionally small (names basically unreadable),
@@ -360,8 +393,6 @@
     document.getElementById('btnShowPanel').addEventListener('click', ()=>{ showPanel(true); showUI(true); });
     document.getElementById('btnPause').addEventListener('click', ()=>{ togglePause(); bumpUI(); });
     document.getElementById('btnRestart').addEventListener('click', ()=>{ resetSim(false); showUI(true); showPanel(true); });
-    document.getElementById('btnChaosDown').addEventListener('click', ()=>{ CFG.chaos = max(0.35, CFG.chaos-0.15); bumpUI(); });
-    document.getElementById('btnChaosUp').addEventListener('click', ()=>{ CFG.chaos = min(3.0, CFG.chaos+0.15); bumpUI(); });
     document.getElementById('btnHide').addEventListener('click', ()=>{ setUIHidden(true); });
 
     document.getElementById('clearBtn').addEventListener('click', ()=>{
@@ -589,10 +620,10 @@
     }
     const ids = Array.from({length:count}, (_,i)=>i+1);
 
-    const topBound = height*0.30;
-    const minY = height*0.32;
-    const maxY = height - 22;
-    const marginX = 18;
+    const topBound = height*0.30 + ARENA_PAD;
+    const minY = height*0.32 + ARENA_PAD;
+    const maxY = height - ARENA_PAD;
+    const marginX = ARENA_PAD;
 
     for(let i=0;i<count;i++){
       const size = getDynamicBubbleSize(count);
@@ -650,7 +681,18 @@
     for(let i=particles.length-1;i>=0;i--){
       particles[i].update();
       if(particles[i].dead) particles.splice(i,1);
+    
+    // FINAL 5 announcement (once)
+    if(!final5Triggered && simState==="running" && players.length===5){
+      final5Triggered = true;
+      final5Frames = 90;
+      playOne(sfxWoosh, SFX.woosh);
+      playOne(sfxBass, SFX.bass);
+      frameShake = max(frameShake, 6);
     }
+
+    stepFinal5Overlay();
+}
 
     if(confettiActive){
       for(let i=confetti.length-1;i>=0;i--){
@@ -695,7 +737,7 @@
           zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
           zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
 
-          if(random() < CFG.nearMissChance*CFG.chaos){
+          if(random() < CFG.nearMissChance*arenaChaos()){
             zorb.aimX += random([-1,1])*random(40,80);
             zorb.aimY += random(20,60);
             playOne(sfxWoosh, SFX.woosh);
@@ -705,7 +747,7 @@
         zorb.charge -= 1;
         if(zorb.charge<=0){
           fireShot();
-          zorb.fireCooldown = 1/(rate*CFG.chaos);
+          zorb.fireCooldown = 1/(rate);
         }
       }
     }
@@ -765,11 +807,11 @@
   function fireShot(){
     const origin = random(cannonOrigins());
     const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
-    const speed = CFG.projectileSpeed*(0.85+0.3*CFG.chaos);
+    const speed = CFG.projectileSpeed*(0.85+0.3*arenaChaos());
     const vel = dir.mult(speed);
 
-    const piercing = random() < CFG.multiElimChance*CFG.chaos;
-    const ricochet = random() < CFG.ricochetChance*CFG.chaos;
+    const piercing = random() < CFG.multiElimChance*arenaChaos();
+    const ricochet = random() < CFG.ricochetChance*arenaChaos();
 
     projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
 
@@ -804,6 +846,8 @@
     drawFinaleFrameGlow();
 
     if(simState==="countdown") drawCountdown();
+
+    drawFinal5Overlay();
     if(simState==="finished" && players.length===1){
       drawFinaleAura();
       drawWinner(players[0]);
@@ -925,17 +969,92 @@
     }
   }
 
+  
   function drawCountdown(){
     const secLeft = ceil(countdownFrames/60);
-    noStroke(); fill(0,0,0,110); rect(0,0,width,height);
-    fill(255,255,255,240);
+
+    // Play whoosh once per number
+    if(secLeft !== lastCountdownSec){
+      lastCountdownSec = secLeft;
+      playOne(sfxWoosh, SFX.woosh);
+      // little cinematic shake
+      frameShake = max(frameShake, 2.4);
+    }
+
+    // Darken arena slightly
+    noStroke();
+    fill(0,0,0,120);
+    rect(0,0,width,height);
+
+    // Bounce / zoom: strongest right after the number changes
+    const phase = (countdownFrames % 60) / 60; // 0..1 within the second
+    const bounce = 1 + 0.28 * pow(1 - phase, 2);
+    const cx = width * 0.5;
+    const cy = height * 0.50;
+
+    push();
+    translate(cx, cy);
+    scale(bounce);
+
+    // Glow number
     textAlign(CENTER,CENTER);
-    textSize(54); text(secLeft, width*0.5, height*0.50);
-    textSize(16); fill(255,255,255,220);
-    text("Zorbi begins…", width*0.5, height*0.56);
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.shadowBlur = 42;
+    ctx.shadowColor = "rgba(255, 0, 200, 0.70)";
+    fill(255,255,255,255);
+    textSize(86);
+    text(secLeft, 0, 0);
+    ctx.restore();
+
+    // Subtle outline to keep crisp
+    stroke(255,255,255,90);
+    strokeWeight(3);
+    noFill();
+    text(secLeft, 0, 0);
+
+    pop();
   }
 
-  function drawWinner(b){
+
+  
+  function stepFinal5Overlay(){
+    if(final5Frames > 0) final5Frames -= 1;
+  }
+
+  function drawFinal5Overlay(){
+    if(final5Frames <= 0) return;
+
+    const t = final5Frames;
+    const pulse = (sin(frameCount*0.18)*0.5+0.5);
+    const shake = map(t, 0, 90, 0, 6);
+    const dx = random(-shake, shake);
+    const dy = random(-shake, shake);
+
+    const cx = width*0.5 + dx;
+    const cy = height*0.40 + dy;
+
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.shadowBlur = 44 + pulse*18;
+    ctx.shadowColor = "rgba(255, 0, 200, 0.70)";
+
+    textAlign(CENTER,CENTER);
+    fill(255,255,255,252);
+    textSize(56);
+    text("FINAL 5!", cx, cy);
+    ctx.restore();
+
+    // secondary line
+    ctx.save();
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = "rgba(160, 80, 255, 0.65)";
+    fill(210, 240, 255, 250);
+    textSize(16);
+    text("SUDDEN DEATH MODE", cx, cy + 44);
+    ctx.restore();
+  }
+function drawWinner(b){
     noStroke();
     fill(0,0,0,120);
     rect(0,0,width,height);
@@ -976,30 +1095,71 @@
     text(label, cx, cy + 6);
     drawingContext.restore();
 
+    
     const by = height * 0.16;
     const bannerW = min(width * 0.88, 520);
-    const bannerH = 62;
+    const bannerH = 64;
 
-    rectMode(CENTER);
-    noStroke();
+    // Premium banner (gradient + soft bloom)
+    {
+      const ctx = drawingContext;
+      ctx.save();
 
-    fill(160, 80, 255, 35 + pulse*45);
-    rect(cx, by, bannerW + 26, bannerH + 18, 20);
+      const x = cx - bannerW/2;
+      const y = by - bannerH/2;
 
-    fill(255, 0, 200, 58 + pulse*70);
-    rect(cx, by, bannerW, bannerH, 18);
+      const g = ctx.createLinearGradient(x, y, x + bannerW, y + bannerH);
+      g.addColorStop(0, "rgba(255, 0, 200, 0.92)");
+      g.addColorStop(1, "rgba(160, 80, 255, 0.92)");
 
+      ctx.shadowBlur = 34;
+      ctx.shadowColor = "rgba(255, 0, 200, 0.55)";
+      ctx.fillStyle = g;
+
+      // rounded rect
+      if(ctx.roundRect){
+        ctx.beginPath();
+        ctx.roundRect(x, y, bannerW, bannerH, 18);
+        ctx.fill();
+      }else{
+        // fallback
+        noStroke();
+        fill(255, 0, 200, 190);
+        rectMode(CENTER);
+        rect(cx, by, bannerW, bannerH, 18);
+        rectMode(CORNER);
+      }
+
+      // subtle inner sheen
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 2;
+      if(ctx.roundRect){
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    // WINNER text (glow + crisp)
     textAlign(CENTER, CENTER);
-    textSize(40);
+    textSize(44);
 
     drawingContext.save();
-    drawingContext.shadowBlur = 32;
-    drawingContext.shadowColor = "rgba(255, 0, 200, 0.75)";
-    fill(255,255,255,252);
+    drawingContext.shadowBlur = 30;
+    drawingContext.shadowColor = "rgba(0,0,0,0.55)";
+    fill(255,255,255,255);
     text("WINNER!", cx, by);
     drawingContext.restore();
 
-    const hLabel = (b.handle ? "@" + b.handle : ("#" + b.id));
+    // outer neon glow
+    drawingContext.save();
+    drawingContext.shadowBlur = 26;
+    drawingContext.shadowColor = "rgba(255, 255, 255, 0.55)";
+    fill(255,255,255,255);
+    text("WINNER!", cx, by);
+    drawingContext.restore();
+const hLabel = (b.handle ? "@" + b.handle : ("#" + b.id));
     textSize(24);
 
     drawingContext.save();
@@ -1053,6 +1213,14 @@
 
       this.spin=random([-1,1])*random(0.8,1.35);
       this.swirl=random(0.6,1.4);
+
+      // random glare so bubbles don't look stamped
+      this.glareOx = random(-0.36, -0.12);
+      this.glareOy = random(-0.46, -0.18);
+      this.glareW  = random(0.65, 1.05);
+      this.glareH  = random(0.38, 0.70);
+      this.glareA  = random(40, 78);
+
     }
 
     update(){
@@ -1061,32 +1229,32 @@
       const targetR = lerp(size.min, size.max, this.rSeed);
       this.r = lerp(this.r, targetR, 0.08);
 
-      const f = p5.Vector.random2D().mult(0.16*CFG.chaos);
+      const f = p5.Vector.random2D().mult(0.16*arenaChaos());
       this.v.add(f);
 
       const cx=width*0.5, cy=height*0.60;
       const toC=createVector(cx-this.x, cy-this.y);
 
       const tangent=createVector(-toC.y, toC.x).normalize()
-        .mult(CFG.swirlStrength*this.spin*this.swirl*CFG.chaos);
+        .mult(CFG.swirlStrength*this.spin*this.swirl*arenaChaos());
       this.v.add(tangent);
 
-      if(random() < CFG.swirlJukeChance*CFG.chaos){
+      if(random() < CFG.swirlJukeChance*arenaChaos()){
         const j=p5.Vector.random2D().mult(CFG.swirlJukeForce*random(0.7,1.2));
         this.v.add(j);
       }
 
-      const maxV = CFG.maxSpeed*(0.85+0.35*CFG.chaos);
+      const maxV = CFG.maxSpeed*(0.85+0.35*arenaChaos());
       if(this.v.mag()>maxV) this.v.setMag(maxV);
 
       this.x += this.v.x;
       this.y += this.v.y;
 
-      const topBound = height*0.28;
-      if(this.x < this.r){ this.x=this.r; this.v.x*=-1; }
-      if(this.x > width-this.r){ this.x=width-this.r; this.v.x*=-1; }
+      const topBound = height*0.28 + ARENA_PAD;
+      if(this.x < ARENA_PAD + this.r){ this.x=ARENA_PAD + this.r; this.v.x*=-1; }
+      if(this.x > width-ARENA_PAD-this.r){ this.x=width-ARENA_PAD-this.r; this.v.x*=-1; }
       if(this.y < topBound+this.r){ this.y=topBound+this.r; this.v.y*=-1; }
-      if(this.y > height-this.r){ this.y=height-this.r; this.v.y*=-1; }
+      if(this.y > height-ARENA_PAD-this.r){ this.y=height-ARENA_PAD-this.r; this.v.y*=-1; }
 
       this.v.mult(CFG.bounceDamping);
       this.wob += this.wobSp;
@@ -1098,7 +1266,7 @@
       const minD=this.r+other.r+8;
       if(d>0 && d<minD){
         const overlap=(minD-d)/minD;
-        const push=overlap*CFG.separationStrength*(1+0.35*CFG.chaos);
+        const push=overlap*CFG.separationStrength*(1+0.35*arenaChaos());
         const nx=dx/d, ny=dy/d;
 
         this.x -= nx*push*40; this.y -= ny*push*40;
@@ -1129,7 +1297,8 @@
 
       noStroke();
       fill(255,255,255,55);
-      ellipse(-this.r*0.28, -this.r*0.32, this.r*0.85, this.r*0.55);
+      fill(255,255,255,this.glareA);
+      ellipse(this.r*this.glareOx, this.r*this.glareOy, this.r*this.glareW, this.r*this.glareH);
 
       pop();
     }
@@ -1350,10 +1519,15 @@
     enableStart(true);
   }
 
+  
   function updateHud(){
     const z = zorbLoaded ? "ok" : "MISSING Zorb2.PNG";
     const a = audioUnlocked ? "unlocked" : "locked";
-    const state = (simState==="setup") ? "SETUP" : (simState==="countdown") ? "COUNTDOWN" : (simState==="running") ? "RUNNING" : "FINISH";
+    const state =
+      (simState==="setup") ? "SETUP" :
+      (simState==="countdown") ? "COUNTDOWN" :
+      (simState==="running") ? "RUNNING" : "FINISH";
+
     const cd = (simState==="countdown") ? ` • starts in ${ceil(countdownFrames/60)}s` : "";
     const rd = ROUND_META?.round_date ? ` • ${ROUND_META.round_date}` : "";
     const mode = ROUND_META?.mode ? ` • ${ROUND_META.mode}` : "";
@@ -1361,9 +1535,10 @@
 
     hudStatusEl.textContent =
       `State: ${state}${rd}${mode}${backend} • Zorb: ${z} • Audio: ${a}` +
-      ` • Players: ${CFG.playerCount} • Remaining: ${players.length} • Chaos: ${CFG.chaos.toFixed(2)}${cd}` +
+      ` • Players: ${CFG.playerCount} • Remaining: ${players.length}${cd}` +
       (paused ? " • PAUSED" : "");
   }
+
 
   function updatePanelStatusThrottled(force=false){
     const now = performance.now();
