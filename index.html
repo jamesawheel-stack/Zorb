@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link rel="icon" type="image/png" href="Zorb2.PNG">
-  <title>Zorbi – Mobile Full v5.9</title>
+  <title>Zorbi – Mobile Full v6.5</title>
   <style>
     :root{
       --bg:#0B0F1F;
@@ -20,21 +20,6 @@
     }
     html,body{margin:0;padding:0;background:var(--bg);overflow:hidden;height:100%}
     canvas{display:block;margin:0 auto;touch-action:none}
-
-    /* Finale border glow overlay (matches CANVAS bounds, not full viewport) */
-    #finalGlow{
-      position:fixed;
-      pointer-events:none;
-      z-index:6; /* above canvas, below hud/panel/controls */
-      opacity:0;
-      transition:opacity 240ms ease;
-      border-radius:22px;
-      box-shadow:
-        0 0 0 3px rgba(180, 70, 255, 0.0) inset,
-        0 0 32px rgba(180, 70, 255, 0.0),
-        0 0 90px rgba(255, 0, 200, 0.0);
-    }
-    #finalGlow.on{opacity:1}
 
     #hud{
       position:fixed;left:12px;top:12px;z-index:10;
@@ -81,7 +66,6 @@
     .btn.small{min-width:52px;padding:10px 10px}
     .btn.wide{min-width:110px}
     .btn.primary{border-color:rgba(120,255,170,0.35);background:rgba(120,255,170,0.12)}
-    .pill.purple{border-color:rgba(180,100,255,0.40);box-shadow:0 0 18px rgba(180,100,255,0.25)}
     .hidden{display:none!important}
 
     #toast{
@@ -96,8 +80,7 @@
   </style>
 </head>
 <body>
-  <div id="toast">UI shown • will auto-hide for recording</div>
-  <div id="finalGlow"></div>
+  <div id="toast">UI shown</div>
 
   <div id="hud">
     <b>Zorbi – Today’s Round</b>
@@ -107,7 +90,7 @@
 
   <div id="panel">
     <h1 id="panelTitle">Load today’s roster</h1>
-    <p>Today’s roster supports up to <b id="maxCountLabel">?</b> entrants. Press <b>Start</b> to begin the countdown.</p>
+    <p>Today’s roster supports up to <b id="maxCountLabel">?</b> entrants. Press <b>Start</b> to begin.</p>
 
     <div class="row">
       <button class="btn wide primary" id="startBtn" type="button">Start Battle</button>
@@ -121,7 +104,7 @@
       <span class="pill" id="panelBackend">Backend: …</span>
     </div>
 
-    <div class="note">Tip: after you press Start, the UI auto-hides in ~2s for clean recording.</div>
+    <div class="note">After Start: UI hides immediately (and stays hidden all game unless you tap).</div>
   </div>
 
   <div id="controls">
@@ -142,25 +125,20 @@
       ? "http://localhost:10000"
       : "https://zorb.onrender.com";
 
-  const ROUND_URL        = BACKEND_BASE + "/top50.json";
-  const WINNER_URL       = BACKEND_BASE + "/round/today/winner";
+  const ROUND_URL  = BACKEND_BASE + "/top50.json";
+  const WINNER_URL = BACKEND_BASE + "/round/today/winner";
 
-  let UPLOAD_TOKEN = null;
-
-  let ROUND_META = { round_date:null, mode:null, claimed_total:null, finale_count:null, status:null, seed:null, video_url:null };
+  let ROUND_META = { round_date:null, mode:null, claimed_total:null, finale_count:null, status:null, seed:null };
   let BACKEND_WINNER = null;
   let BACKEND_OK = false;
 
   const CFG = {
     aspectW:9, aspectH:16,
-    baseHeight:1280,
+    baseHeight:1920,
     bgColor:'#0B0F1F',
     vignette:true,
 
     playerCount:50,
-    bubbleMinR:42,
-    bubbleMaxR:58,
-    bubbleGlow:18,
 
     wanderForce:0.16,
     maxSpeed:2.35,
@@ -195,7 +173,6 @@
     nearMissChance:0.10,
     ricochetChance:0.06,
 
-    // shake: keep pops punchy; keep shots subtle
     screenShakePop:12,
     screenShakeShot:2.2,
 
@@ -229,19 +206,19 @@
   let simState="setup";
   let countdownFrames=0;
 
+  // Confetti (win moment)
+  let confetti = [];
+  let confettiActive = false;
+  let confettiUntilFrame = 0;
+
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl;
-  let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, panelVideoEl, startBtnEl;
-  let finalGlowEl;
+  let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, startBtnEl;
 
   let uiHidden=false, hideTimer=null;
 
-  // iOS stability / throttles
   let lastHudUpdateMs=0;
   let lastPanelUpdateMs=0;
   let wakeLock=null;
-
-  // reload SFX timing
-  let lastReloadSfxAt=0;
 
   async function loadTodayRound(){
     try{
@@ -271,8 +248,6 @@
         status: round?.status || null,
         seed: round?.seed ?? null,
       };
-
-      UPLOAD_TOKEN = round?.upload_token || null;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent =
@@ -311,33 +286,37 @@
     hookUI();
     await loadTodayRound();
     resetSim(true);
-    updateCanvasGlowBounds(true);
     updatePanelStatusThrottled(true);
     updateHudThrottled(true);
   }
 
   function windowResized(){
     createOrResizeCanvas();
-    updateCanvasGlowBounds(true);
   }
 
   function createOrResizeCanvas(){
-  const targetH = Math.min(windowHeight, CFG.baseHeight);
-  const targetW = targetH * (CFG.aspectW/CFG.aspectH);
-  const w = Math.min(windowWidth, targetW);
-  const h = w * (CFG.aspectH/CFG.aspectW);
-  createCanvas(Math.floor(w), Math.floor(h));
+    const targetH = Math.min(windowHeight, CFG.baseHeight);
+    const targetW = targetH * (CFG.aspectW/CFG.aspectH);
+    const w = Math.min(windowWidth, targetW);
+    const h = w * (CFG.aspectH/CFG.aspectW);
+    createCanvas(Math.floor(w), Math.floor(h));
 
-  const dpr = window.devicePixelRatio || 2;
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const pd = isIOS ? Math.min(1.5, dpr) : Math.min(2, dpr);
-  pixelDensity(pd);
+    const dpr = window.devicePixelRatio || 2;
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const pd = isIOS ? Math.min(1.75, dpr) : Math.min(2, dpr);
+    pixelDensity(pd);
 
-  stars=[];
-  for(let i=0;i<120;i++){
-    stars.push({x:random(width),y:random(height),r:random(0.8,2.2),tw:random(TAU),sp:random(0.006,0.02)});
+    try{
+      smooth();
+      drawingContext.imageSmoothingEnabled = true;
+      drawingContext.imageSmoothingQuality = "high";
+    }catch(_){}
+
+    stars=[];
+    for(let i=0;i<120;i++){
+      stars.push({x:random(width),y:random(height),r:random(0.8,2.2),tw:random(TAU),sp:random(0.006,0.02)});
+    }
   }
-}
 
   function hookUI(){
     hudEl = document.getElementById('hud');
@@ -345,7 +324,6 @@
     panelEl = document.getElementById('panel');
     toastEl = document.getElementById('toast');
     controlsEl = document.getElementById('controls');
-    finalGlowEl = document.getElementById('finalGlow');
 
     panelRosterEl = document.getElementById('panelRoster');
     panelZorbEl = document.getElementById('panelZorb');
@@ -370,13 +348,8 @@
     });
 
     startBtnEl.addEventListener('click', async () => {
-      //Always refresh today's round first
       await loadTodayRound();
-
-      //Build players from backend roster
       resetSim(false);
-
-      //Begin game
       beginCountdown();
     });
 
@@ -391,7 +364,12 @@
       if(simState === 'running' || simState === 'countdown') requestWakeLock();
 
       if(!panelEl.classList.contains('hidden')) return;
-      if(uiHidden){ showUI(true); bumpUI(); return; }
+
+      if(uiHidden){
+        showUI(true);
+        return;
+      }
+
       togglePause();
       bumpUI();
     }, { passive:true });
@@ -407,46 +385,44 @@
 
   function enableStart(on){ startBtnEl.disabled = !on; }
   function showPanel(show){ panelEl.classList.toggle('hidden', !show); }
-
   function togglePause(){ if(simState !== "setup") paused = !paused; }
 
   function beginCountdown(){
-  unlockAudioOnce();
-  requestWakeLock();
+    unlockAudioOnce();
+    requestWakeLock();
 
-  // Hide panel + UI immediately
-  showPanel(false);
-  setUIHidden(true);
+    showPanel(false);
+    if(hideTimer) clearTimeout(hideTimer);
+    setUIHidden(true);
+    paused = false;
 
-  paused = false;
+    setTimeout(() => {
+      simState = "countdown";
+      countdownFrames = max(1, floor(CFG.countdownSec * 60));
+    }, 180);
+  }
 
-  // Small cinematic delay so recording starts clean
-  setTimeout(() => {
-    simState = "countdown";
-    countdownFrames = max(1, floor(CFG.countdownSec * 60));
-
-    if (recEnabled) startRecording();
-  }, 200);
-}
-
-  function showUI(withToast){ setUIHidden(false); if(withToast) toastPulse(); }
-  function setUIHidden(hidden){ uiHidden=hidden; hudEl.classList.toggle('hidden', hidden); controlsEl.classList.toggle('hidden', hidden); }
+  function showUI(withToast){
+    setUIHidden(false);
+    if(withToast) toastPulse();
+  }
+  function setUIHidden(hidden){
+    uiHidden=hidden;
+    hudEl.classList.toggle('hidden', hidden);
+    controlsEl.classList.toggle('hidden', hidden);
+  }
 
   function toastPulse(){
     toastEl.classList.add('show');
     setTimeout(()=>toastEl.classList.remove('show'), 1100);
   }
 
-  function armAutoHide(){
-    if(hideTimer) clearTimeout(hideTimer);
-    setUIHidden(false);
-    hideTimer = setTimeout(()=>setUIHidden(true), 2200);
-  }
-
   function bumpUI(){
     if(hideTimer) clearTimeout(hideTimer);
     setUIHidden(false);
-    hideTimer = setTimeout(()=>setUIHidden(true), 1800);
+    if(simState === "setup"){
+      hideTimer = setTimeout(()=>setUIHidden(true), 1800);
+    }
   }
 
   function unlockAudioOnce(){
@@ -492,7 +468,9 @@
     resumeAudioNow();
     if(simState === 'running' || simState === 'countdown') requestWakeLock();
     const ctx = getAudioContext?.();
-    if(audioUnlocked && ctx && ctx.state === 'suspended'){ showUI(true); bumpUI(); }
+    if(audioUnlocked && ctx && ctx.state === 'suspended'){
+      showUI(true);
+    }
   }
 
   async function requestWakeLock(){
@@ -508,62 +486,13 @@
     wakeLock=null;
   }
 
-
-function syncFinalGlowToCanvas(){
-  if (!finalGlowEl) return;
-  const cnv = document.querySelector('canvas');
-  if (!cnv) return;
-  const r = cnv.getBoundingClientRect();
-  // Match the visible canvas area (so glow is captured in recording / not full-screen on desktop)
-  finalGlowEl.style.left = r.left + 'px';
-  finalGlowEl.style.top = r.top + 'px';
-  finalGlowEl.style.width = r.width + 'px';
-  finalGlowEl.style.height = r.height + 'px';
-}
-
-  // Finale border glow (pulses when final 5) + bounds matched to canvas
-  let lastGlowBoundsMs = 0;
-  function updateCanvasGlowBounds(force=false){
-    if(!finalGlowEl) return;
-    const now = performance.now();
-    if(!force && (now - lastGlowBoundsMs) < 800) return;
-    lastGlowBoundsMs = now;
-
-    const cnv = document.querySelector('canvas');
-    if(!cnv) return;
-    const r = cnv.getBoundingClientRect();
-    finalGlowEl.style.left = r.left + "px";
-    finalGlowEl.style.top = r.top + "px";
-    finalGlowEl.style.width = r.width + "px";
-    finalGlowEl.style.height = r.height + "px";
-  }
-
-  function updateFinaleGlow(){
-    if(!finalGlowEl) return;
-
-    const isFinale = (simState === "running" && players.length <= 5);
-    finalGlowEl.classList.toggle('on', isFinale);
-
-    // keep bounds correct on desktop where canvas isn't full-screen
-    updateCanvasGlowBounds(false);
-
-    if(!isFinale) return;
-
-    const t = frameCount * 0.06;
-    const pulse = (sin(t)*0.5+0.5);
-    const a1 = 0.18 + pulse*0.32;
-    const a2 = 0.22 + pulse*0.55;
-    const a3 = 0.16 + pulse*0.55;
-
-    finalGlowEl.style.boxShadow =
-      `0 0 0 3px rgba(180, 70, 255, ${a1}) inset,
-       0 0 0 10px rgba(180, 70, 255, ${a2}) inset,
-       0 0 0 18px rgba(255, 0, 200, ${a3}) inset`;
-  }
-
   function resetSim(keepSetupState){
     players=[]; projectiles=[]; particles=[]; frameShake=0;
     paused=false; winnerPlayed=false;
+
+    confetti = [];
+    confettiActive = false;
+    confettiUntilFrame = 0;
 
     zorb.y = height * CFG.robotY;
     zorb.aimX = width * 0.5;
@@ -619,7 +548,6 @@ function syncFinalGlowToCanvas(){
   function draw(){
     if(!paused) step();
     render();
-    updateFinaleGlow();
     updateHudThrottled(false);
   }
 
@@ -641,6 +569,16 @@ function syncFinalGlowToCanvas(){
       if(particles[i].dead) particles.splice(i,1);
     }
 
+    if(confettiActive){
+      for(let i=confetti.length-1;i>=0;i--){
+        confetti[i].update();
+        if(confetti[i].dead) confetti.splice(i,1);
+      }
+      if(frameCount > confettiUntilFrame && confetti.length === 0){
+        confettiActive = false;
+      }
+    }
+
     tensionTarget = (players.length<=5 && simState==="running") ? 1 : 0;
     tensionVol = lerp(tensionVol, tensionTarget, 0.02);
     if(audioUnlocked && sfxTension) sfxTension.setVolume(SFX.master*SFX.tensionMax*tensionVol);
@@ -659,7 +597,6 @@ function syncFinalGlowToCanvas(){
       if(players.length<=2) rate = CFG.fireRateFinal2;
 
       if(players.length<=5 && frameCount % CFG.slowMoFrames < 10){
-        // slow-mo beat
       }else{
         if(zorb.charge<=0){
           zorb.charge = CFG.chargeTime;
@@ -688,16 +625,18 @@ function syncFinalGlowToCanvas(){
       if(!winnerPlayed){
         playOne(sfxWinner, SFX.winner);
         winnerPlayed=true;
-        (async () => {
 
-  try {
-    await reportWinnerToBackend(players[0]);
-  } catch (e) {
-    console.error("reportWinnerToBackend failed", e);
-  } finally {
-    releaseWakeLock();
-  }
-})();
+        spawnConfetti();
+
+        (async () => {
+          try {
+            await reportWinnerToBackend(players[0]);
+          } catch (e) {
+            console.error("reportWinnerToBackend failed", e);
+          } finally {
+            releaseWakeLock();
+          }
+        })();
       }
     }
   }
@@ -747,7 +686,6 @@ function syncFinalGlowToCanvas(){
     playOne(sfxFire, SFX.fire);
     zorb.recoil = 1.0;
 
-    // Subtle shake on shot (big shake stays on POP)
     frameShake = max(frameShake, CFG.screenShakeShot*(players.length<=5?1.0:0.8));
   }
 
@@ -771,11 +709,15 @@ function syncFinalGlowToCanvas(){
     drawZorb();
     for(const pt of particles) pt.draw();
 
+    drawFinaleFrameGlow();
+
     if(simState==="countdown") drawCountdown();
     if(simState==="finished" && players.length===1){
       drawFinaleAura();
       drawWinner(players[0]);
     }
+
+    if(confettiActive) drawConfetti();
 
     pop();
   }
@@ -795,6 +737,29 @@ function syncFinalGlowToCanvas(){
       stroke(0,0,0,14);
       rect(-i,-i, width+2*i, height+2*i, 22);
     }
+  }
+
+  function drawFinaleFrameGlow(){
+    if(!(simState === "running" && players.length <= 5)) return;
+
+    const pulse = sin(frameCount * 0.06) * 0.5 + 0.5;
+
+    drawingContext.save();
+    drawingContext.shadowBlur = 42 + pulse * 26;
+    drawingContext.shadowColor = "rgba(255, 0, 200, 0.55)";
+
+    noFill();
+    stroke(160, 80, 255, 90 + pulse * 120);
+    strokeWeight(10);
+    rect(10, 10, width - 20, height - 20, 22);
+
+    drawingContext.shadowBlur = 18 + pulse * 18;
+    drawingContext.shadowColor = "rgba(160, 80, 255, 0.65)";
+    stroke(255, 0, 200, 55 + pulse * 90);
+    strokeWeight(5);
+    rect(14, 14, width - 28, height - 28, 20);
+
+    drawingContext.restore();
   }
 
   function drawFinaleAura(){
@@ -864,7 +829,6 @@ function syncFinalGlowToCanvas(){
     text("Zorbi begins…", width*0.5, height*0.56);
   }
 
-  
   function drawWinner(b){
     noStroke();
     fill(0,0,0,120);
@@ -874,42 +838,38 @@ function syncFinalGlowToCanvas(){
     const R  = min(width, height) * 0.23;
     const pulse = sin(frameCount*0.06)*0.5+0.5;
 
-    // Purple outer glow burst
     noStroke();
     fill(160, 80, 255, 40 + pulse*50);
     circle(cx, cy, R*2.8 + pulse*30);
 
-    // Main ring
-    stroke(190,245,255,140);
-    strokeWeight(5);
-    fill(255,255,255,14);
-    circle(cx, cy, R*2);
+    drawingContext.save();
+    drawingContext.shadowBlur = 26;
+    drawingContext.shadowColor = "rgba(0,0,0,0.55)";
+    stroke(190,245,255,160);
+    strokeWeight(6);
+    fill(255,255,255,18);
+    circle(cx, cy, R*2.02);
+    drawingContext.restore();
 
-    // Bubble shine
     noStroke();
     fill(255,255,255,58);
     ellipse(cx - R*0.28, cy - R*0.32, R*1.05, R*0.68);
 
-    // Bubble content
-    {
-      const label = (b.handle ? "@" + b.handle : String(b.id));
-      let ts = R * 0.52;
-      if (label.length > 8) ts = R * 0.38;
-      if (label.length > 12) ts = R * 0.32;
+    const label = (b.handle ? "@" + b.handle : String(b.id));
+    let ts = R * 0.52;
+    if (label.length > 8) ts = R * 0.38;
+    if (label.length > 12) ts = R * 0.32;
 
-      textAlign(CENTER, CENTER);
-      textSize(ts);
+    textAlign(CENTER, CENTER);
+    textSize(ts);
 
-      // crisp white with soft purple glow (no chunky black stroke)
-      drawingContext.save();
-      drawingContext.shadowBlur = 22;
-      drawingContext.shadowColor = "rgba(180, 90, 255, 0.85)";
-      fill(255,255,255,250);
-      text(label, cx, cy + 6);
-      drawingContext.restore();
-    }
+    drawingContext.save();
+    drawingContext.shadowBlur = 22;
+    drawingContext.shadowColor = "rgba(180, 90, 255, 0.85)";
+    fill(255,255,255,250);
+    text(label, cx, cy + 6);
+    drawingContext.restore();
 
-    // ===== WINNER HEADER (banner + glow) =====
     const by = height * 0.16;
     const bannerW = min(width * 0.88, 520);
     const bannerH = 62;
@@ -917,25 +877,22 @@ function syncFinalGlowToCanvas(){
     rectMode(CENTER);
     noStroke();
 
-    // layered glow fills
-    fill(160, 80, 255, 38 + pulse*42);
-    rect(cx, by, bannerW + 18, bannerH + 10, 18);
+    fill(160, 80, 255, 35 + pulse*45);
+    rect(cx, by, bannerW + 26, bannerH + 18, 20);
 
-    fill(255, 0, 200, 60 + pulse*65);
+    fill(255, 0, 200, 58 + pulse*70);
     rect(cx, by, bannerW, bannerH, 18);
 
-    // text with glow
     textAlign(CENTER, CENTER);
     textSize(40);
 
     drawingContext.save();
-    drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(255, 0, 200, 0.65)";
-    fill(255,255,255,250);
+    drawingContext.shadowBlur = 32;
+    drawingContext.shadowColor = "rgba(255, 0, 200, 0.75)";
+    fill(255,255,255,252);
     text("WINNER!", cx, by);
     drawingContext.restore();
 
-    // ===== HANDLE DISPLAY =====
     const hLabel = (b.handle ? "@" + b.handle : ("#" + b.id));
     textSize(24);
 
@@ -946,9 +903,7 @@ function syncFinalGlowToCanvas(){
     text(hLabel, cx, height*0.24);
     drawingContext.restore();
 
-    // ===== FOLLOW CTA =====
     textSize(16);
-
     drawingContext.save();
     drawingContext.shadowBlur = 14;
     drawingContext.shadowColor = "rgba(180, 90, 255, 0.55)";
@@ -958,7 +913,6 @@ function syncFinalGlowToCanvas(){
 
     rectMode(CORNER);
   }
-
 
   function drawBubbleLabel(label, x, y, r){
     label = String(label||"");
@@ -994,7 +948,7 @@ function syncFinalGlowToCanvas(){
     }
 
     update(){
-      const f = p5.Vector.random2D().mult(CFG.wanderForce*CFG.chaos);
+      const f = p5.Vector.random2D().mult(0.16*CFG.chaos);
       this.v.add(f);
 
       const cx=width*0.5, cy=height*0.60;
@@ -1049,7 +1003,7 @@ function syncFinalGlowToCanvas(){
 
       noStroke();
       fill(120,220,255,24);
-      circle(0,0, this.r*2 + CFG.bubbleGlow);
+      circle(0,0, this.r*2 + 18);
 
       stroke(190,245,255,110);
       strokeWeight(3);
@@ -1149,8 +1103,61 @@ function syncFinalGlowToCanvas(){
     }
   }
 
+  class ConfettiPiece{
+    constructor(x,y){
+      this.x=x; this.y=y;
+      this.vx=random(-2.6,2.6);
+      this.vy=random(3.2,8.4);
+      this.ang=random(TAU);
+      this.spin=random(-0.25,0.25);
+      this.w=random(6,12);
+      this.h=random(10,18);
+      this.life=random(120,220);
+      this.dead=false;
+      this.c = random([
+        [255, 0, 200],
+        [160, 80, 255],
+        [120, 220, 255],
+        [255, 240, 120],
+        [120, 255, 170],
+        [255, 120, 120]
+      ]);
+    }
+    update(){
+      this.x += this.vx;
+      this.y += this.vy;
+      this.vy += 0.06;
+      this.vx *= 0.992;
+      this.ang += this.spin;
+      this.life -= 1;
+      if(this.y > height + 50 || this.life <= 0) this.dead=true;
+    }
+    draw(){
+      push();
+      translate(this.x, this.y);
+      rotate(this.ang);
+      noStroke();
+      fill(this.c[0], this.c[1], this.c[2], 220);
+      rectMode(CENTER);
+      rect(0,0,this.w,this.h,2);
+      pop();
+    }
+  }
+
+  function spawnConfetti(){
+    confetti = [];
+    confettiActive = true;
+    confettiUntilFrame = frameCount + 260;
+    const burst = 160;
+    for(let i=0;i<burst;i++){
+      const x = random(10, width-10);
+      const y = random(-60, -10);
+      confetti.push(new ConfettiPiece(x,y));
+    }
+  }
+  function drawConfetti(){ for(const c of confetti) c.draw(); }
+
   function cueReloadAfterPop(){
-    // Play *once* shortly after the last pop in a multi-elimination burst.
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => {
       if (simState !== "running") return;
@@ -1164,11 +1171,7 @@ function syncFinalGlowToCanvas(){
   function popBubble(b){
     playRandPop();
     playOne(sfxBass, SFX.bass);
-
-    // Big shake on POP (not on every shot)
     frameShake = max(frameShake, CFG.screenShakePop*(players.length<=5?1.2:1.0));
-
-    // Better reload timing: shortly after pop
     cueReloadAfterPop();
 
     for(let i=0;i<CFG.popParticles;i++){
@@ -1183,42 +1186,37 @@ function syncFinalGlowToCanvas(){
   }
 
   async function reportWinnerToBackend(b) {
-  const payload = { winner: b.handle || ("#" + b.id), winnerSlot: b.id };
+    const payload = { winner: b.handle || ("#" + b.id), winnerSlot: b.id };
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const res = await fetch(WINNER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const text = await res.text(); // read body even if not json
-      if (!res.ok) throw new Error(`HTTP ${res.status} • ${text}`);
-
-      // visible success
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        toastEl.textContent = "Winner saved ✅";
-        toastPulse();
-      } catch (_) {}
+        const res = await fetch(WINNER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
-      return true;
-    } catch (e) {
-      // visible failure
-      try {
-        toastEl.textContent = `Winner save failed (try ${attempt})`;
-        toastPulse();
-      } catch (_) {}
+        const text = await res.text();
+        if (!res.ok) throw new Error(`HTTP ${res.status} • ${text}`);
 
-      console.warn("Winner POST failed:", e);
+        try {
+          toastEl.textContent = "Winner saved ✅";
+          toastPulse();
+        } catch (_) {}
 
-      // small backoff
-      await new Promise(r => setTimeout(r, 700 * attempt));
+        return true;
+      } catch (e) {
+        try {
+          toastEl.textContent = `Winner save failed (try ${attempt})`;
+          toastPulse();
+        } catch (_) {}
+
+        console.warn("Winner POST failed:", e);
+        await new Promise(r => setTimeout(r, 700 * attempt));
+      }
     }
+    return false;
   }
-
-  return false;
-}
 
   function updatePanelStatus(){
     panelRosterEl.textContent = `Roster: ${CFG.playerCount} entrants`;
