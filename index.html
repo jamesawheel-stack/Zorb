@@ -110,11 +110,7 @@
     <p>Today’s roster supports up to <b id="maxCountLabel">?</b> entrants. Press <b>Start</b> to begin the countdown.</p>
 
     <div class="row">
-      <button class="btn wide" id="startNumbers" type="button">Start</button>
-    </div>
-
-    <div class="row">
-      <button class="btn wide primary" id="startBtn" type="button" disabled>Start</button>
+      <button class="btn wide primary" id="startBtn" type="button">Start Battle</button>
       <button class="btn wide" id="clearBtn" type="button">Reset</button>
     </div>
 
@@ -396,13 +392,6 @@
       updatePanelStatusThrottled(true);
     });
 
-    document.getElementById('startNumbers').addEventListener('click', async ()=>{
-      await loadTodayRound();
-      resetSim(false);
-      enableStart(true);
-      beginCountdown();
-    });
-
     document.getElementById('clearBtn').addEventListener('click', ()=>{
       resetSim(true);
       showPanel(true);
@@ -411,7 +400,16 @@
       bumpUI();
     });
 
-    startBtnEl.addEventListener('click', ()=> beginCountdown());
+    startBtnEl.addEventListener('click', async () => {
+      //Always refresh today's round first
+      await loadTodayRound();
+
+      //Build players from backend roster
+      resetSim(false);
+
+      //Begin game
+      beginCountdown();
+    });
 
     document.addEventListener('visibilitychange', ()=>{
       if(document.visibilityState === 'visible') onReturnToApp();
