@@ -514,29 +514,36 @@ app.get("/leaderboard.json", async (req, res) => {
   res.json(sorted);
 });
 
+// IG bio helper (5-line formatted version)
 app.get("/bio.txt", async (req, res) => {
-  const { data, error } = await supabase
-    .from("rounds")
-    .select("winner")
-    .not("winner", "is", null);
+  try {
+    const { data, error } = await supabase
+      .from("rounds")
+      .select("winner, winner_set_at")
+      .eq("status", "complete")
+      .not("winner", "is", null)
+      .order("winner_set_at", { ascending: false })
+      .limit(1);
 
-  if (error) return res.status(500).send("Error");
+    if (error) {
+      return res.status(500).send("Error");
+    }
 
-  const counts = {};
-  for (const r of data || []) {
-    const w = r.winner;
-    if (!w) continue;
-    counts[w] = (counts[w] || 0) + 1;
+    const lastWinner = data && data.length > 0 ? data[0].winner : "TBD";
+
+    const bioText =
+`🫧 Only 1 bubble survives.
+🤖 Arcade elimination arena
+⚡ New round daily
+🏆 Yesterday: @${lastWinner}
+👇 Follow + comment “IN” to enter`;
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.send(bioText);
+
+  } catch (e) {
+    res.status(500).send("Error");
   }
-
-  const top = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([h, c]) => `@${h}(${c})`)
-    .join(" • ");
-
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.send(`🏆 Top: ${top || "TBD"}`);
 });
 
 app.listen(PORT, () => console.log("Listening on", PORT));
