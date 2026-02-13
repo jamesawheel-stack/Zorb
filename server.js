@@ -352,6 +352,24 @@ app.post("/round/today/winner", async (req, res) => {
   }
 });
 
+app.get("/round/today/winner", async (req, res) => {
+  try {
+    const round_date = todayIdUTC();
+
+    const { data, error } = await supabase
+      .from("rounds")
+      .select("round_date,status,mode,winner,winner_slot,winner_set_at")
+      .eq("round_date", round_date)
+      .single();
+
+    if (error) return res.status(404).json({ ok: false, error: error.message });
+
+    res.json({ ok: true, ...data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // 5-line IG bio text (yesterday winner)
 app.get("/bio.txt", async (req, res) => {
   try {
