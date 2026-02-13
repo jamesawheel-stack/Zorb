@@ -315,7 +315,7 @@ multiElimChance:0.08,
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
   let paused=false, frameShake=0;
-  let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0 };
+  let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0, aimMeta:null };
 
   // --- MUSIC HELPERS (soft fade-in, no loud first frame) ---
   function startMusicSoft(){
@@ -766,9 +766,9 @@ function beginCountdown(){
     const dotCount = max(0, count - simCount);
 
     const topBound = height*0.30;
-    const minY = height*0.32;
-    const maxY = height - 22;
-    const marginX = 18;
+    const minY = height*0.32 + 6;
+    const maxY = height - ARENA_PAD - 6;
+    const marginX = ARENA_PAD + 6;
 
     // Light dots: no separation, no labels; just drift + bounce
     const dotR = (count > 2000) ? 2.0 : (count > 1000) ? 2.4 : (count > 400) ? 2.8 : 3.2;
@@ -831,9 +831,9 @@ function beginCountdown(){
     // Update lightweight extra dots (stride update keeps big counts smooth)
     if(extraDots.length){
       const topBound = height*0.28;
-      const minY = height*0.32;
-      const maxY = height - 22;
-      const marginX = 18;
+      const minY = height*0.32 + 6;
+      const maxY = height - ARENA_PAD - 6;
+      const marginX = ARENA_PAD + 6;
       const stride = max(1, PERF.dotUpdateStride|0);
       const phase = frameCount % stride;
 
@@ -920,8 +920,11 @@ function beginCountdown(){
           zorb.charge = CFG.chargeTime;
 
           const t = pickTarget();
-          zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
-          zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
+          zorb.aimMeta = t;
+          const tx = t.isDot ? t.x : t.bubble.x;
+          const ty = t.isDot ? t.y : t.bubble.y;
+          zorb.aimX = tx + random(-CFG.aimJitter, CFG.aimJitter);
+          zorb.aimY = ty + random(-CFG.aimJitter, CFG.aimJitter);
 
           if(random() < CFG.nearMissChance*arenaChaos(remaining)){
             zorb.aimX += random([-1,1])*random(40,80);
@@ -986,29 +989,26 @@ spawnConfetti();
   }
 
   function pickTarget(){
-    // Prefer dots while there are many, so the big rounds burn down quickly
-    const rem = totalRemaining();
-    const preferDots = extraDots.length && rem > PERF.maxSimBubbles;
+    // When we're in "dot crowd" mode, frequently aim at dots so the crowd actually thins out.
+    const remaining = totalRemaining();
+    const dotMode = (extraDots && extraDots.length>0);
 
-    if(preferDots && random() < 0.75){
-      // sample a few random dots and pick the “best”
-      const samples = min(12, extraDots.length);
-      let best = extraDots[int(random(extraDots.length))];
-      let bestScore = -1e9;
-      for(let k=0;k<samples;k++){
-        const d = extraDots[int(random(extraDots.length))];
-        const centerBias = -dist(d.x,d.y, width*0.5, height*0.62);
-        const score = centerBias + random(-60,60);
-        if(score>bestScore){ bestScore=score; best=d; }
+    // choose dot targets more when dots dominate
+    if(dotMode){
+      const dotWeight = extraDots.length / Math.max(1, remaining); // 0..1
+      const pDot = constrain(0.35 + dotWeight*0.55, 0.35, 0.90);
+      if(random() < pDot){
+        const d = random(extraDots);
+        if(d) return { isDot:true, id:d.id, x:d.x, y:d.y };
       }
-      return best;
     }
 
-    // Otherwise, pick among bubbles
+    // bubble target (avoid backend winner when possible)
     const avoidWinner = BACKEND_WINNER && players.length>2;
     const pool = avoidWinner ? players.filter(b=>b.handle !== BACKEND_WINNER) : players;
     if(pool.length===0) return random(players);
-    if(players.length>12) return random(pool);
+
+    if(players.length>12) return { isDot:false, bubble: random(pool) };
 
     let best = pool[0], bestScore=-1e9;
     for(const b of pool){
@@ -1017,8 +1017,9 @@ spawnConfetti();
       const score = centerBias + motion + random(-80,80);
       if(score>bestScore){ bestScore=score; best=b; }
     }
-    return best;
+    return { isDot:false, bubble: best };
   }
+
 
   function cannonOrigins(){
     const robotX = getRobotX();
@@ -1044,7 +1045,7 @@ spawnConfetti();
     const piercing = random() < CFG.multiElimChance*arenaChaos();
     const ricochet = random() < CFG.ricochetChance*arenaChaos();
 
-    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
+    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet, zorb.aimMeta && zorb.aimMeta.isDot ? zorb.aimMeta.id : null, zorb.aimX, zorb.aimY));
 
     playOne(sfxFire, SFX.fire);
     zorb.recoil = 1.0;
@@ -1108,34 +1109,68 @@ spawnConfetti();
     }
   }
 
-  function drawExtraDots(){
+  
+  function removeDotById(dotId, atX, atY){
+    if(!extraDots || extraDots.length===0) return false;
+    const idx = extraDots.findIndex(d=>d.id===dotId);
+    if(idx<0) return false;
+    const d = extraDots[idx];
+    extraDots.splice(idx,1);
+
+    // tiny pop so it feels like eliminations are happening in the crowd
+    if(atX==null){ atX=d.x; atY=d.y; }
+    for(let i=0;i<6;i++){
+      const v=p5.Vector.random2D().mult(random(0.8,3.4));
+      particles.push(new Particle(atX,atY,v.x,v.y,12,'spark'));
+    }
+    playOne(sfxBass, 0.22);
+    return true;
+  }
+
+function drawExtraDots(){
     if(!extraDots || extraDots.length===0) return;
 
-    // Fade out the dot cloud as we approach finals so the transition feels seamless
-    const rem = totalRemaining();
-    const fade = constrain(map(rem, 400, PERF.maxSimBubbles, 1, 0), 0, 1);
-
-    const ctx = drawingContext;
-
-    // For very large dot counts, use a fast fillRect path (much cheaper than thousands of circles)
-    if(extraDots.length >= PERF.dotDrawFastThreshold){
-      ctx.save();
-      ctx.globalAlpha = 0.55 * fade;
-      ctx.fillStyle = "rgba(180,200,255,1)";
-      const r = extraDots[0].r || 2;
-      for(const d of extraDots){
-        ctx.fillRect(d.x, d.y, r, r);
-      }
-      ctx.restore();
-      return;
-    }
+    // Cap draw count for performance (still *represents* the full crowd).
+    const MAX_DRAW = 900;
+    const step = max(1, floor(extraDots.length / MAX_DRAW));
 
     noStroke();
-    for(const d of extraDots){
-      fill(180,200,255, (d.a||160) * 0.6 * fade);
-      circle(d.x, d.y, d.r);
+    for(let i=0;i<extraDots.length;i+=step){
+      const d = extraDots[i];
+      d.tw += d.sp;
+
+      // subtle swirl like the bubbles but cheaper
+      const cx=width*0.5, cy=height*0.62;
+      const toC = createVector(cx-d.x, cy-d.y);
+      const tangent = createVector(-toC.y, toC.x).normalize().mult(0.06 * d.sw);
+      d.vx += tangent.x;
+      d.vy += tangent.y;
+
+      // depth: back dots are smaller/dimmer
+      const z = d.z ?? 0.5;
+      const tw = (sin(d.tw)*0.5+0.5);
+      const r = lerp(1.0, 2.4, z);
+      const a = lerp(45, 165, z) + tw*55;
+
+      // move (parallax: back moves slower)
+      const spd = lerp(0.55, 1.0, z);
+      d.x += d.vx*spd;
+      d.y += d.vy*spd;
+      d.vx *= 0.985; d.vy *= 0.985;
+
+      // bounds within arena
+      const pad = ARENA_PAD + 6;
+      const topBound = height*0.28 + 6;
+      if(d.x < pad){ d.x=pad; d.vx*=-1; }
+      if(d.x > width-pad){ d.x=width-pad; d.vx*=-1; }
+      if(d.y < topBound){ d.y=topBound; d.vy*=-1; }
+      if(d.y > height-pad){ d.y=height-pad; d.vy*=-1; }
+
+      fill(210,230,255, a);
+      circle(d.x, d.y, r);
     }
   }
+
 
 
   
@@ -1356,7 +1391,18 @@ function drawFinaleFrameGlow(){
     if(final5Frames > 0) final5Frames -= 1;
   }
 
-  function drawFinal5Overlay(){
+  
+  function triggerFinal5Overlay(){
+    if(final5Active) return;
+    final5Active = true;
+    // give people time to actually read it
+    final5Frames = 150; // ~2.5s at 60fps
+    // punch audio
+    try{ playOne(sfxWoosh, 0.75); }catch(_){}
+    try{ playOne(sfxBass, 0.55); }catch(_){}
+  }
+
+function drawFinal5Overlay(){
     if(final5Frames <= 0) return;
 
     const t = final5Frames;
@@ -1581,10 +1627,21 @@ function drawBubbleLabel(label, x, y, r, alpha){
       this.x += this.v.x;
       this.y += this.v.y;
 
+
+      // Dot-targeted shots (crowd mode): remove a dot when we reach the aimed point
+      if(this.dotId){
+        const dx = (this.tx - this.x), dy = (this.ty - this.y);
+        if(dx*dx + dy*dy < (this.r*4.2)*(this.r*4.2)){
+          removeDotById(this.dotId, this.tx, this.ty);
+          this.dead = true;
+          return;
+        }
+      }
+
       const topBound = height*0.28 + ARENA_PAD;
       if(this.x < ARENA_PAD + this.r){ this.x=ARENA_PAD + this.r; this.v.x*=-1; }
       if(this.x > width-ARENA_PAD-this.r){ this.x=width-ARENA_PAD-this.r; this.v.x*=-1; }
-      if(this.y < topBound+this.r){ this.y=topBound+this.r; this.v.y*=-1; }
+      if(this.y < topBound+this.r+4){ this.y=topBound+this.r+4; this.v.y*=-1; }
       if(this.y > height-ARENA_PAD-this.r){ this.y=height-ARENA_PAD-this.r; this.v.y*=-1; }
 
       this.v.mult(CFG.bounceDamping);
@@ -1636,7 +1693,7 @@ function drawBubbleLabel(label, x, y, r, alpha){
   }
 
   class Projectile{
-    constructor(x,y,vx,vy,piercing=false,ricochet=false){
+    constructor(x,y,vx,vy,piercing=false,ricochet=false,dotId=null,tx=null,ty=null){
       this.x=x; this.y=y;
       this.v=createVector(vx,vy);
       this.r=CFG.projectileRadius;
@@ -1644,6 +1701,9 @@ function drawBubbleLabel(label, x, y, r, alpha){
       this.piercing=piercing;
       this.ricochet=ricochet;
       this.hasRicocheted=false;
+      this.dotId = dotId;
+      this.tx = tx;
+      this.ty = ty;
     }
 
     update(){
