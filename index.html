@@ -422,7 +422,7 @@
         sfxMusic.amp(MUSIC.peak, MUSIC.fadeInMs/1000);
         setTimeout(()=>{
           sfxMusic.amp(MUSIC.bed, MUSIC.fadeDownMs/1000);
-        }, Music.fadeInMs + MUSIC.holdMs);
+        }, MUSIC.fadeInMs + MUSIC.holdMs);
       } else {
         sfxMusic.amp(MUSIC.bed, 0.8);
       }
