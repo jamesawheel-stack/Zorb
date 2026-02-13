@@ -706,7 +706,10 @@
     for (const pt of particles) pt.draw();
 
     if (simState === "countdown") drawCountdown();
-    if (simState === "finished" && players.length === 1) drawWinner(players[0]);
+    if (simState === "finished" && players.length === 1) {
+  drawFinaleAura();
+  drawWinner(players[0]);
+}
 
     pop();
   }
@@ -728,6 +731,29 @@
     }
   }
 
+function drawFinaleAura() {
+  const ctx = drawingContext;
+  ctx.save();
+
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const radius = max(width, height) * 0.85;
+
+  const gradient = ctx.createRadialGradient(
+    cx, cy, radius * 0.2,
+    cx, cy, radius
+  );
+
+  gradient.addColorStop(0, "rgba(160, 80, 255, 0.25)");
+  gradient.addColorStop(0.4, "rgba(130, 50, 255, 0.18)");
+  gradient.addColorStop(1, "rgba(80, 0, 180, 0.45)");
+
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.restore();
+}
+    
   function drawZorb() {
     const robotX = getRobotX();
     const hoverY = sin(frameCount * CFG.robotHoverSpeedY) * CFG.robotHoverAmpY;
@@ -786,45 +812,68 @@
   }
 
   function drawWinner(b) {
-    noStroke();
-    fill(0,0,0,120);
-    rect(0,0,width,height);
+  noStroke();
+  fill(0,0,0,120);
+  rect(0,0,width,height);
 
-    const cx = width*0.5, cy = height*0.52;
-    const R  = min(width, height) * 0.23;
-    const pulse = sin(frameCount*0.06)*0.5+0.5;
+  const cx = width*0.5, cy = height*0.52;
+  const R  = min(width, height) * 0.23;
+  const pulse = sin(frameCount*0.06)*0.5+0.5;
 
-    noStroke();
-    fill(120,220,255,30 + pulse*40);
-    circle(cx, cy, R*2.45 + pulse*24);
+  // Purple outer glow burst
+  noStroke();
+  fill(160, 80, 255, 40 + pulse*50);
+  circle(cx, cy, R*2.8 + pulse*30);
 
-    stroke(190,245,255,140);
-    strokeWeight(5);
-    fill(255,255,255,14);
-    circle(cx, cy, R*2);
+  // Main ring
+  stroke(190,245,255,140);
+  strokeWeight(5);
+  fill(255,255,255,14);
+  circle(cx, cy, R*2);
 
-    noStroke();
-    fill(255,255,255,58);
-    ellipse(cx - R*0.28, cy - R*0.32, R*1.05, R*0.68);
+  // Bubble content
+  noStroke();
+  fill(255,255,255,58);
+  ellipse(cx - R*0.28, cy - R*0.32, R*1.05, R*0.68);
 
-    if (b.img) drawClippedImageCircle(b.img, cx, cy, R*1.62);
-    else {
-      fill(255,255,255,230);
-      textAlign(CENTER, CENTER);
-      textSize(R*0.7);
-      text(b.id, cx, cy+6);
-    }
-
+  if (b.img) {
+    drawClippedImageCircle(b.img, cx, cy, R*1.62);
+  } else {
+    fill(255,255,255,230);
     textAlign(CENTER, CENTER);
-    noStroke();
-    fill(255,255,255,240);
-    textSize(34);
-    text("WINNER!", cx, height*0.18);
-
-    fill(255,255,255,220);
-    textSize(16);
-    text(b.handle ? ("@" + b.handle) : "Winner", cx, height*0.22);
+    textSize(R*0.7);
+    text(b.id, cx, cy+6);
   }
+
+  textAlign(CENTER, CENTER);
+
+  // ===== WINNER HEADER =====
+  push();
+  drawingContext.shadowBlur = 30;
+  drawingContext.shadowColor = "rgba(180, 100, 255, 0.95)";
+  fill(200, 160, 255);
+  textSize(40);
+  text("WINNER!", cx, height*0.16);
+  pop();
+
+  // ===== HANDLE DISPLAY =====
+  push();
+  drawingContext.shadowBlur = 22;
+  drawingContext.shadowColor = "rgba(120, 220, 255, 0.95)";
+  fill(170, 240, 255);
+  textSize(24);
+  text(`@${b.handle || b.id}`, cx, height*0.24);
+  pop();
+
+  // ===== FOLLOW CTA =====
+  push();
+  drawingContext.shadowBlur = 12;
+  drawingContext.shadowColor = "rgba(160, 100, 255, 0.7)";
+  fill(220, 200, 255);
+  textSize(16);
+  text("Follow + comment 'IN' to enter tomorrow", cx, height*0.29);
+  pop();
+}
 
   function drawClippedImageCircle(img, x, y, d) {
     const ctx = drawingContext;
@@ -922,14 +971,15 @@
       fill(255, 255, 255, 14);
       ellipse(0, 0, this.r*2*wobble, this.r*2*(2-wobble));
 
-      if (this.img) drawClippedImageCircle(this.img, 0, 2, this.r*1.55);
-      else {
-        noStroke();
-        fill(255,255,255,210);
-        textAlign(CENTER, CENTER);
-        textSize(this.r*0.6);
-        text(this.id, 0, 6);
-      }
+      if (this.img) {
+  drawClippedImageCircle(this.img, 0, 2, this.r*1.55);
+} else if (this.handle) {
+  textSize(this.r * 0.35);
+  text("@" + this.handle, 0, 6);
+} else {
+  textSize(this.r * 0.6);
+  text(this.id, 0, 6);
+}
 
       noStroke();
       fill(255,255,255,55);
