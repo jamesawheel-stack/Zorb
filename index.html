@@ -417,7 +417,6 @@
     simState="countdown";
     countdownFrames = max(1, floor(CFG.countdownSec*60));
     armAutoHide();
-    if(recEnabled) startRecording();
   }
 
   function showUI(withToast){ setUIHidden(false); if(withToast) toastPulse(); }
