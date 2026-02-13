@@ -320,7 +320,7 @@ app.post("/round/today/winner", async (req, res) => {
     const { error } = await supabase
       .from("rounds")
       .update({
-        status: "complete",
+        status: "rendered",
         winner: winner || null,
         winner_slot,
         winner_set_at: new Date().toISOString(),
