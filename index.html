@@ -369,7 +369,8 @@
     window.addEventListener('focus', ()=> onReturnToApp());
 
     document.body.addEventListener('click', ()=>{
-  // Unlock audio context
+  
+      // Unlock audio context
   if(!audioUnlocked){
     userStartAudio();
     audioUnlocked = true;
@@ -467,13 +468,7 @@
     userStartAudio();
     audioUnlocked = true;
     resumeAudioNow();
-    try{
-      if(sfxMusic){
-        sfxMusic.setLoop(true);
-        sfxMusic.amp(0); //start silent and fade in
-        if(!sfxMusic.isPlaying()) sfxMusic.play();
-      }
-    }catch(_){}
+    }
     
     if(sfxTension){
       sfxTension.setLoop(true);
@@ -481,19 +476,6 @@
       sfxTension.play();
     }
     updatePanelStatusThrottled(true);
-  }
-
-  function setMusicOn(on){
-    if(!sfxMusic) return;
-    const target = on ? 0.28 : 0.0; // <-- change 0.28 (first number to taste)
-    const secs = on ? 1.2 : 0.6;
-    try{
-      if(on && !sfxmusic.isPlaying()){
-        sfxMusic.setLopp(true);
-        sfxMusic.play();
-      }
-      sfxMusic.amp(target, secs); //smooth fade
-    }catch(_){}
   }
     
   function playOne(snd, vol){
