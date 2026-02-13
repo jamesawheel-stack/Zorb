@@ -2,8 +2,9 @@ import express from "express";
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
-import path from "path";
+import os from "os";
 import fs from "fs";
+import crypto from "crypto";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -15,26 +16,24 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim();
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
 const ADMIN_KEY = (process.env.ADMIN_KEY || "").trim();
-const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // https://<user>.github.io
+const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // e.g. https://jamesawheel-stack.github.io
 
 // IG (optional)
 const IG_ACCESS_TOKEN = (process.env.IG_ACCESS_TOKEN || "").trim();
 const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase();
 
-// Counts (ONLY these)
+// Counts
 const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap (2..100)
 const MIN_PLAYERS = 2;
 
-// Optional: protect uploads with a token (recommended)
+// Video upload (Supabase Storage)
+const VIDEO_BUCKET = (process.env.VIDEO_BUCKET || "zorbi-video").trim();
+const VIDEO_BUCKET_PUBLIC = String(process.env.VIDEO_BUCKET_PUBLIC || "").trim().toLowerCase() === "true";
 const VIDEO_UPLOAD_TOKEN = (process.env.VIDEO_UPLOAD_TOKEN || "").trim();
+const VIDEO_SIGNED_URL_TTL_SEC = Number(process.env.VIDEO_SIGNED_URL_TTL_SEC || 60 * 60 * 24); // 24h
 
-// Supabase Storage for videos
-const VIDEO_BUCKET = (process.env.VIDEO_BUCKET || "").trim();
-const VIDEO_BUCKET_PUBLIC = (process.env.VIDEO_BUCKET_PUBLIC || "").trim(); // optional public base URL
-
-// ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.warn("⚠️ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  console.warn("â ï¸ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -49,7 +48,6 @@ app.use((req, res, next) => {
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-key");
-
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
@@ -57,6 +55,12 @@ app.use((req, res, next) => {
 // ---------------- HELPERS ----------------
 function todayIdUTC() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+}
+
+function yesterdayIdUTC() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function randSeed() {
@@ -90,6 +94,15 @@ function requireAdmin(req) {
 
 function safeStr(s, maxLen = 80) {
   return (s ?? "").toString().slice(0, maxLen);
+}
+
+function hasValidVideoToken(token) {
+  if (!VIDEO_UPLOAD_TOKEN) return true; // allow if unset
+  return token === VIDEO_UPLOAD_TOKEN;
+}
+
+function randId(len = 8) {
+  return crypto.randomBytes(Math.ceil(len / 2)).toString("hex").slice(0, len);
 }
 
 // ---------------- IG HELPERS (optional) ----------------
@@ -167,7 +180,6 @@ function buildLivePlayersFromComments(comments, cap) {
   }
 
   const picked = shuffle(uniq).slice(0, cap);
-
   return picked.map((p, i) => ({
     slot: i + 1,
     handle: p.handle,
@@ -185,15 +197,14 @@ async function upsertRound(row) {
   if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
 }
 
-async function getTodayRound() {
-  const { data, error } = await supabase
-    .from("rounds")
-    .select("*")
-    .eq("round_date", todayIdUTC())
-    .single();
-
+async function getRoundByDate(round_date) {
+  const { data, error } = await supabase.from("rounds").select("*").eq("round_date", round_date).single();
   if (error) return null;
   return data;
+}
+
+async function getTodayRound() {
+  return getRoundByDate(todayIdUTC());
 }
 
 // ---------------- ROUND GENERATION ----------------
@@ -206,23 +217,18 @@ async function generateRound({ requestedMaxPlayers } = {}) {
   let players = [];
   let claimed_total = 0;
 
-  const cap = clampInt(
-    requestedMaxPlayers ?? PLAYER_COUNT_MAX,
-    MIN_PLAYERS,
-    PLAYER_COUNT_MAX
-  );
+  const cap = clampInt(requestedMaxPlayers ?? PLAYER_COUNT_MAX, MIN_PLAYERS, PLAYER_COUNT_MAX);
 
+  // -------- TRY LIVE MODE --------
   if (IG_ACCESS_TOKEN) {
     try {
       const latest = await getLatestMedia();
       if (latest?.id) {
         post = latest;
-
         const comments = await getComments(latest.id);
         const livePlayers = buildLivePlayersFromComments(comments, PLAYER_COUNT_MAX);
 
         claimed_total = livePlayers.length;
-
         if (claimed_total >= MIN_PLAYERS) {
           mode = "live";
           const finale_count = clampInt(Math.min(claimed_total, cap), MIN_PLAYERS, PLAYER_COUNT_MAX);
@@ -234,6 +240,7 @@ async function generateRound({ requestedMaxPlayers } = {}) {
     }
   }
 
+  // -------- TRAINING FALLBACK --------
   if (mode !== "live") {
     mode = "training";
     claimed_total = cap;
@@ -255,145 +262,18 @@ async function generateRound({ requestedMaxPlayers } = {}) {
     winner: null,
     winner_slot: null,
     winner_set_at: null,
+
     // video fields
-  upload_token: VIDEO_UPLOAD_TOKEN || null,
-  video_url: null,
-  video_storage_path: null,
-  error_message: null,
+    upload_token: VIDEO_UPLOAD_TOKEN || null,
+    video_url: null,
+    video_storage_path: null,
+    video_uploaded_at: null,
+    error_message: null,
   };
 
   await upsertRound(row);
   return row;
 }
-
-// ---------------- VIDEO UPLOAD ----------------
-const uploadDir = path.join(process.cwd(), "public", "videos");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const upload = multer({
-  dest: uploadDir,
-  limits: { fileSize: 120 * 1024 * 1024 }, // 120MB cap
-});
-
-app.use("/videos", express.static(path.join(process.cwd(), "public", "videos")));
-
-// Upload today's round video (stores in Supabase Storage bucket if configured)
-app.post("/api/round/today/video", upload.single("video"), async (req, res) => {
-  try {
-    const round_date = todayIdUTC();
-
-    // Optional token gate (recommended)
-    if (VIDEO_UPLOAD_TOKEN) {
-      const token = (req.body?.token || "").trim();
-      if (token !== VIDEO_UPLOAD_TOKEN) {
-        return res.status(401).json({ ok: false, error: "Unauthorized" });
-      }
-    }
-
-    if (!req.file) return res.status(400).json({ ok: false, error: "Missing video file" });
-
-    const ct = req.file.mimetype || "video/mp4";
-    const ext = ct.includes("mp4") ? "mp4" : (ct.includes("webm") ? "webm" : "bin");
-
-    // Use provided filename if present, else deterministic
-    const safeName = safeStr(req.file.originalname || `zorbi_${round_date}.${ext}`, 120).replace(/[^a-zA-Z0-9._-]/g, "_");
-    const storage_path = `round_videos/${round_date}/${safeName}`;
-
-    let video_url = null;
-
-    if (VIDEO_BUCKET) {
-      // Upload to Supabase Storage
-      const { error: upErr } = await supabase.storage
-        .from(VIDEO_BUCKET)
-        .upload(storage_path, req.file.buffer, {
-          contentType: ct,
-          upsert: true,
-          cacheControl: "3600",
-        });
-
-      if (upErr) {
-        return res.status(500).json({ ok: false, error: `Storage upload failed: ${upErr.message}` });
-      }
-
-      if (VIDEO_BUCKET_PUBLIC) {
-        // If you set this to the bucket's public base URL, we can build a URL directly
-        // Example: https://<project>.supabase.co/storage/v1/object/public/zorbi-video
-        video_url = `${VIDEO_BUCKET_PUBLIC.replace(/\/$/, "")}/${storage_path}`;
-      } else {
-        const pub = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(storage_path);
-        video_url = pub?.data?.publicUrl || null;
-      }
-    } else {
-      // Fallback (local disk) - useful for local dev only
-      const uploadsDir = path.join(process.cwd(), "uploads");
-      await fs.promises.mkdir(uploadsDir, { recursive: true });
-      const localPath = path.join(uploadsDir, safeName);
-      await fs.promises.writeFile(localPath, req.file.buffer);
-      video_url = `/videos/${encodeURIComponent(safeName)}`;
-    }
-
-    // Persist on rounds table
-    const { error } = await supabase
-      .from("rounds")
-      .update({
-        video_url,
-        video_storage_path: storage_path,
-        video_storage_bucket: VIDEO_BUCKET || null,
-        video_uploaded_at: new Date().toISOString(),
-      })
-      .eq("round_date", round_date);
-
-    if (error) return res.status(500).json({ ok: false, error: error.message });
-
-    res.json({ ok: true, round_date, video_url, storage_path });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
-// Get today's round video URL (if uploaded)
-app.get("/api/round/today/video", async (req, res) => {
-  try {
-    const round_date = todayIdUTC();
-    const { data, error } = await supabase
-      .from("rounds")
-      .select("round_date, video_url, video_storage_path, video_uploaded_at")
-      .eq("round_date", round_date)
-      .single();
-
-    if (error) return res.status(404).json({ ok: false, error: "No round found for today" });
-    res.json({ ok: true, ...data });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-// Get a signed (temporary) download URL for today's video (works even if bucket is private)
-app.get("/api/round/today/video/signed", async (req, res) => {
-  try {
-    const round_date = todayIdUTC();
-    const { data, error } = await supabase
-      .from("rounds")
-      .select("video_storage_bucket, video_storage_path")
-      .eq("round_date", round_date)
-      .single();
-
-    if (error || !data?.video_storage_bucket || !data?.video_storage_path) {
-      return res.status(404).json({ ok: false, error: "No video uploaded for today" });
-    }
-
-    const expiresIn = clampInt(req.query?.expires || 86400, 60, 7 * 86400); // default 24h
-    const { data: signed, error: sErr } = await supabase.storage
-      .from(data.video_storage_bucket)
-      .createSignedUrl(data.video_storage_path, expiresIn);
-
-    if (sErr) return res.status(500).json({ ok: false, error: sErr.message });
-
-    res.json({ ok: true, url: signed?.signedUrl || null, expires_in: expiresIn });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
 
 // ---------------- ROUTES ----------------
 app.get("/", (req, res) => {
@@ -411,16 +291,20 @@ app.get("/api/envcheck", (req, res) => {
     playerCountMax: PLAYER_COUNT_MAX,
     minPlayers: MIN_PLAYERS,
     gameOrigin: GAME_ORIGIN || null,
-    hasVideoUploadToken: !!VIDEO_UPLOAD_TOKEN,
+
+    // video
     hasVideoBucket: !!VIDEO_BUCKET,
-    hasVideoBucketPublic: !!VIDEO_BUCKET_PUBLIC,
+    videoBucket: VIDEO_BUCKET || null,
+    videoBucketPublic: VIDEO_BUCKET_PUBLIC,
+    uploadTokenEnabled: !!VIDEO_UPLOAD_TOKEN,
+    signedUrlTtlSec: VIDEO_SIGNED_URL_TTL_SEC,
   });
 });
 
 app.get("/admin", (req, res) => {
   res.send(`
     <h2>Zorbi Admin</h2>
-    <p>Generate today’s round (live if possible, else training).</p>
+    <p>Generate todayâs round (live if possible, else training).</p>
     <p>Optional test size: <code>/admin/generate?max=72</code></p>
     <input id="key" placeholder="Admin Key" style="width:340px;padding:6px;" />
     <button onclick="gen()" style="padding:6px 10px;">Generate</button>
@@ -449,17 +333,18 @@ app.post("/admin/generate", async (req, res) => {
     const round = await generateRound({ requestedMaxPlayers });
     res.json({ ok: true, ...round });
   } catch (e) {
+    console.error(e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// Game reads today’s round
 app.get("/top50.json", async (req, res) => {
   try {
     let round = await getTodayRound();
     if (!round) round = await generateRound();
     res.json(round);
   } catch (e) {
+    console.error(e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -470,9 +355,7 @@ app.post("/round/today/winner", async (req, res) => {
     const winner = safeStr(req.body?.winner, 64);
     const winnerSlotRaw = req.body?.winnerSlot;
 
-    const winner_slot = Number.isFinite(Number(winnerSlotRaw))
-      ? Number(winnerSlotRaw)
-      : null;
+    const winner_slot = Number.isFinite(Number(winnerSlotRaw)) ? Number(winnerSlotRaw) : null;
 
     const { error } = await supabase
       .from("rounds")
@@ -488,16 +371,14 @@ app.post("/round/today/winner", async (req, res) => {
 
     res.json({ ok: true });
   } catch (e) {
+    console.error(e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
+// Leaderboard JSON
 app.get("/leaderboard.json", async (req, res) => {
-  const { data, error } = await supabase
-    .from("rounds")
-    .select("winner")
-    .not("winner", "is", null);
-
+  const { data, error } = await supabase.from("rounds").select("winner").not("winner", "is", null);
   if (error) return res.status(500).json({ ok: false, error: error.message });
 
   const counts = {};
@@ -514,35 +395,120 @@ app.get("/leaderboard.json", async (req, res) => {
   res.json(sorted);
 });
 
-// IG bio helper (5-line formatted version)
+// IG bio helper (5 lines, yesterday winner)
 app.get("/bio.txt", async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("rounds")
-      .select("winner, winner_set_at")
-      .eq("status", "complete")
-      .not("winner", "is", null)
-      .order("winner_set_at", { ascending: false })
-      .limit(1);
-
-    if (error) {
-      return res.status(500).send("Error");
-    }
-
-    const lastWinner = data && data.length > 0 ? data[0].winner : "TBD";
-
-    const bioText =
-`🫧 Only 1 bubble survives.
-🤖 Arcade elimination arena
-⚡ New round daily
-🏆 Yesterday: @${lastWinner}
-👇 Follow + comment “IN” to enter`;
+    const y = yesterdayIdUTC();
+    const yd = await getRoundByDate(y);
+    const yWinner = yd?.winner ? `@${yd.winner}` : "TBD";
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.send(bioText);
-
+    res.send(
+      `ð«§ Only 1 bubble survives.\n` +
+        `ð¤ Arcade elimination arena\n` +
+        `â¡ New round daily\n` +
+        `ð Yesterday: ${yWinner}\n` +
+        `ð Follow + comment âINâ to enter`
+    );
   } catch (e) {
     res.status(500).send("Error");
+  }
+});
+
+// ---------------- VIDEO UPLOAD ----------------
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename: (_req, file, cb) => {
+      const ext = (file.originalname || "video.webm").split(".").pop() || "webm";
+      cb(null, `zorbi_tmp_${Date.now()}_${randId(6)}.${ext}`);
+    },
+  }),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+});
+
+async function buildVideoUrl(storagePath) {
+  if (VIDEO_BUCKET_PUBLIC) {
+    const { data } = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(storagePath);
+    return data?.publicUrl || null;
+  }
+  const { data, error } = await supabase.storage.from(VIDEO_BUCKET).createSignedUrl(storagePath, VIDEO_SIGNED_URL_TTL_SEC);
+  if (error) throw new Error(error.message);
+  return data?.signedUrl || null;
+}
+
+app.post("/api/round/today/video", upload.single("video"), async (req, res) => {
+  try {
+    const token = safeStr(req.body?.token, 200);
+    if (!hasValidVideoToken(token)) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    const round_date = safeStr(req.body?.round_date, 12) || todayIdUTC();
+
+    if (!req.file?.path) return res.status(400).json({ ok: false, error: "Missing video file" });
+
+    const mime = req.file.mimetype || "video/webm";
+    const ext = (req.file.originalname || "video.webm").split(".").pop() || (mime.includes("mp4") ? "mp4" : "webm");
+
+    // UNIQUE path so you never collide with an existing same-day video
+    const storagePath = `${round_date}/zorbi_${round_date.replaceAll("-", "")}_${Date.now()}_${randId(6)}.${ext}`;
+
+    const buf = fs.readFileSync(req.file.path);
+
+    const { error: upErr } = await supabase.storage.from(VIDEO_BUCKET).upload(storagePath, buf, {
+      contentType: mime,
+      upsert: true,
+      cacheControl: "3600",
+    });
+
+    // cleanup tmp
+    try { fs.unlinkSync(req.file.path); } catch (_) {}
+
+    if (upErr) throw new Error(upErr.message);
+
+    const video_url = await buildVideoUrl(storagePath);
+
+    const { error: dbErr } = await supabase
+      .from("rounds")
+      .update({
+        video_url: video_url || null,
+        video_storage_path: storagePath,
+        video_uploaded_at: new Date().toISOString(),
+      })
+      .eq("round_date", round_date);
+
+    if (dbErr) throw new Error(dbErr.message);
+
+    res.json({ ok: true, video_url, video_storage_path: storagePath, public: VIDEO_BUCKET_PUBLIC });
+  } catch (e) {
+    console.error("video upload error:", e);
+    console.error(e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Fetch a fresh URL for today's (or a specific date's) video
+app.get("/api/round/today/video", async (req, res) => {
+  try {
+    const round_date = safeStr(req.query?.date, 12) || todayIdUTC();
+    const r = await getRoundByDate(round_date);
+    if (!r?.video_storage_path) {
+      return res.status(404).json({ ok: false, error: "No video yet" });
+    }
+
+    const freshUrl = await buildVideoUrl(r.video_storage_path);
+
+    // keep DB's video_url updated so your index can show a link
+    await supabase
+      .from("rounds")
+      .update({ video_url: freshUrl || r.video_url || null })
+      .eq("round_date", round_date);
+
+    res.json({ ok: true, round_date, video_url: freshUrl, video_storage_path: r.video_storage_path, public: VIDEO_BUCKET_PUBLIC });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
