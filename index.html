@@ -90,6 +90,23 @@
       opacity:0;transition:opacity 220ms ease;pointer-events:none;
     }
     #toast.show{opacity:1}
+  
+    select, option{
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    }
+    select{
+      background:rgba(0,0,0,0.65);
+      color:rgba(255,255,255,0.92);
+      border:1px solid rgba(255,255,255,0.22);
+      border-radius:12px;
+      padding:10px 12px;
+      outline:none;
+      -webkit-appearance:none;
+      appearance:none;
+    }
+    select:focus{border-color:rgba(160,80,255,0.65); box-shadow:0 0 0 2px rgba(160,80,255,0.25)}
+    option{background:#0B0F1F;color:#fff;}
+
   </style>
 </head>
 <body>
@@ -299,6 +316,45 @@ multiElimChance:0.08,
   let players=[], projectiles=[], particles=[], stars=[];
   let paused=false, frameShake=0;
   let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0 };
+
+  // --- MUSIC HELPERS (soft fade-in, no loud first frame) ---
+  function startMusicSoft(){
+    if(!sfxMusic || !audioUnlocked) return;
+    if(musicStarted) return;
+    musicStarted = true;
+    try{
+      // ensure silent before starting playback
+      sfxMusic.stop();
+    }catch(_){}
+    try{
+      sfxMusic.setLoop(true);
+      sfxMusic.amp(0, 0); // instantaneous to 0
+      // loop() is better than play() for looping tracks
+      sfxMusic.loop();
+      // fade up to a gentle bed
+      const sec = Math.max(0.2, (MUSIC.fadeInMs||900)/1000);
+      sfxMusic.amp(MUSIC.bed ?? 0.18, sec);
+    }catch(e){
+      console.warn("music start failed", e);
+    }
+  }
+
+  function stopMusicSoft(){
+    if(!sfxMusic) return;
+    try{
+      // fade out quickly, then stop
+      sfxMusic.amp(0, 0.25);
+      setTimeout(()=>{ try{sfxMusic.stop();}catch(_){} }, 280);
+    }catch(_){}
+    musicStarted = false;
+  }
+
+  function resumeMusicAfterEnd(){
+    if(!sfxMusic || !audioUnlocked) return;
+    // restart softly after a win screen appears
+    setTimeout(()=>startMusicSoft(), 650);
+  }
+
   let simState="setup";
   let countdownFrames=0;
 
@@ -514,11 +570,14 @@ multiElimChance:0.08,
     window.addEventListener('focus', ()=> onReturnToApp());
 
     document.body.addEventListener('click', ()=>{
+    // Start background music softly on first tap (even before Start Battle)
+    startMusicSoft();
+
       // Unlock audio context
   if(!audioUnlocked){
     userStartAudio();
     audioUnlocked = true;
-    setMusicOn(true);
+    stopMusicSoft();
   }
 
   resumeAudioNow();
@@ -579,7 +638,7 @@ multiElimChance:0.08,
   }
 function beginCountdown(){
     unlockAudioOnce();
-    setMusicOn(false);
+    stopMusicSoft();
     requestWakeLock();
 
     showPanel(false);
@@ -903,10 +962,12 @@ function beginCountdown(){
         playOne(sfxWinner, SFX.winner);
         winnerPlayed=true;
 
-        spawnConfetti();
+        
+        resumeMusicAfterEnd();
+spawnConfetti();
 
         // Bring the background music back after the winner sting
-        setTimeout(()=>{ try{ setMusicOn(true); }catch(_){} }, 900);
+        setTimeout(()=>{ try{ stopMusicSoft(); }catch(_){} }, 900);
 
         (async () => {
           try {
