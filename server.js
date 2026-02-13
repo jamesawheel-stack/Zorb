@@ -20,6 +20,7 @@ const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // e.g. https://jame
 
 // IG (optional)
 const IG_ACCESS_TOKEN = (process.env.IG_ACCESS_TOKEN || "").trim();
+const IG_USER_ID = (process.env.IG_USER_ID || "").trim();
 const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase();
 
 // Counts
@@ -117,8 +118,10 @@ async function igFetchJson(url) {
 }
 
 async function getLatestMedia() {
+  if (!IG_USER_ID) return null;
+  
   const url =
-    `https://graph.facebook.com/v24.0/me/media` +
+    `https://graph.facebook.com/v24.0/${IG_USER_ID}/media` +
     `?fields=id,permalink,timestamp,caption` +
     `&limit=10` +
     `&access_token=${IG_ACCESS_TOKEN}`;
@@ -132,7 +135,7 @@ async function getLatestMedia() {
 
 async function getComments(mediaId) {
   let url =
-    `https://graph.instagram.com/${mediaId}/comments` +
+    `https://graph.facebook.com/v24.0/${mediaId}/comments` +
     `?fields=id,username,text,timestamp` +
     `&limit=50` +
     `&access_token=${IG_ACCESS_TOKEN}`;
@@ -287,6 +290,7 @@ app.get("/api/envcheck", (req, res) => {
     hasSupabaseServiceKey: !!SUPABASE_KEY,
     hasAdminKey: !!ADMIN_KEY,
     hasIgAccessToken: !!IG_ACCESS_TOKEN,
+    hasIgUserId: !!IG_USER_ID,
     requireKeyword: REQUIRE_KEYWORD || null,
     playerCountMax: PLAYER_COUNT_MAX,
     minPlayers: MIN_PLAYERS,
