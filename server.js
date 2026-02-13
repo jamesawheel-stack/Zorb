@@ -16,12 +16,28 @@ const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // e.g. https://<use
 
 // Instagram Graph API (EAAY token)
 const IG_ACCESS_TOKEN = (process.env.IG_ACCESS_TOKEN || "").trim(); // EAAY...
-const IG_USER_ID = (process.env.IG_USER_ID || "").trim();           // IG Business Account ID
+const IG_USER_ID = (process.env.IG_USER_ID || "").trim(); // IG Business Account ID
 
 const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase();
 
 const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100);
 const MIN_PLAYERS = 2;
+
+/**
+ * IMPORTANT: These MUST match your Supabase ENUM values exactly.
+ * Set these as Render env vars so you never have to edit code again.
+ *
+ * Example values (yours may differ):
+ *  - ROUND_STATUS_PENDING="pending"
+ *  - ROUND_STATUS_DONE="complete"   (or "completed" / "finished")
+ *  - ROUND_MODE_TRAINING="training"
+ *  - ROUND_MODE_LIVE="live"         (or "ig" / "production")
+ */
+const ROUND_STATUS_PENDING = (process.env.ROUND_STATUS_PENDING || "pending").trim();
+const ROUND_STATUS_DONE = (process.env.ROUND_STATUS_DONE || "complete").trim();
+
+const ROUND_MODE_TRAINING = (process.env.ROUND_MODE_TRAINING || "training").trim();
+const ROUND_MODE_LIVE = (process.env.ROUND_MODE_LIVE || "live").trim();
 
 // ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -36,6 +52,9 @@ app.use((req, res, next) => {
   if (GAME_ORIGIN) {
     res.setHeader("Access-Control-Allow-Origin", GAME_ORIGIN);
     res.setHeader("Vary", "Origin");
+  } else {
+    // safer fallback if GAME_ORIGIN is not set
+    res.setHeader("Access-Control-Allow-Origin", "*");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-key");
@@ -81,7 +100,6 @@ function safeStr(s, maxLen = 80) {
 }
 
 // ---------------- IG GRAPH HELPERS ----------------
-// IMPORTANT: EAAY tokens should use graph.facebook.com + IG_USER_ID
 async function graphFetchJson(url) {
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
@@ -195,7 +213,7 @@ async function generateRound({ requestedMaxPlayers } = {}) {
     PLAYER_COUNT_MAX
   );
 
-  let mode = "training";
+  let mode = ROUND_MODE_TRAINING;
   let post = null;
   let players = [];
   let claimed_total = 0;
@@ -213,20 +231,20 @@ async function generateRound({ requestedMaxPlayers } = {}) {
         claimed_total = livePlayers.length;
 
         if (claimed_total >= MIN_PLAYERS) {
-          mode = "live";
+          mode = ROUND_MODE_LIVE; // <-- enum-safe via env
           const finale_count = clampInt(Math.min(claimed_total, cap), MIN_PLAYERS, PLAYER_COUNT_MAX);
           players = livePlayers.slice(0, finale_count);
         }
       }
     } catch (err) {
       console.warn("Live mode failed; falling back to training:", err?.message || err);
-      mode = "training";
+      mode = ROUND_MODE_TRAINING;
     }
   }
 
   // Training fallback
-  if (mode !== "live") {
-    mode = "training";
+  if (mode !== ROUND_MODE_LIVE) {
+    mode = ROUND_MODE_TRAINING;
     claimed_total = cap;
     players = buildTrainingPlayers(cap);
   }
@@ -235,13 +253,13 @@ async function generateRound({ requestedMaxPlayers } = {}) {
 
   const row = {
     round_date,
-    mode,                 // must match your Supabase enum values
-    status: "pending",
+    mode, // must match your Supabase enum values
+    status: ROUND_STATUS_PENDING, // must match enum
     claimed_total,
     finale_count,
     seed,
-    post,                 // jsonb
-    players,              // jsonb array
+    post, // jsonb
+    players, // jsonb array
     winner: null,
     winner_slot: null,
     winner_set_at: null,
@@ -266,6 +284,12 @@ app.get("/api/envcheck", (req, res) => {
     playerCountMax: PLAYER_COUNT_MAX,
     minPlayers: MIN_PLAYERS,
     gameOrigin: GAME_ORIGIN || null,
+
+    // show these so you can confirm enum strings at runtime
+    roundStatusPending: ROUND_STATUS_PENDING,
+    roundStatusDone: ROUND_STATUS_DONE,
+    roundModeTraining: ROUND_MODE_TRAINING,
+    roundModeLive: ROUND_MODE_LIVE,
   });
 });
 
@@ -315,15 +339,15 @@ app.post("/round/today/winner", async (req, res) => {
     const round_date = todayIdUTC();
     const winner = safeStr(req.body?.winner, 64);
     const winnerSlotRaw = req.body?.winnerSlot;
-    const winner_slot = Number.isFinite(Number(winnerSlotRaw)) ? Number(winnerSlotRaw) : null;
+    const winner_slot = Number.isFinite(Number(winnerSlotRaw)) ? Math.trunc(Number(winnerSlotRaw)) : null;
 
     const { error } = await supabase
       .from("rounds")
       .update({
-        status: "rendered",
+        status: ROUND_STATUS_DONE, // enum-safe via env
         winner: winner || null,
         winner_slot,
-        winner_set_at: new Date().toISOString(),
+        winner_set_at: new Date().toISOString(), // timestamptz
       })
       .eq("round_date", round_date);
 
