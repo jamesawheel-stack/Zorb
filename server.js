@@ -1,6 +1,9 @@
 import express from "express";
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -12,15 +15,18 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim();
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
 const ADMIN_KEY = (process.env.ADMIN_KEY || "").trim();
-const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // e.g. https://jamesawheel-stack.github.io
+const GAME_ORIGIN = (process.env.GAME_ORIGIN || "").trim(); // https://<user>.github.io
 
 // IG (optional)
 const IG_ACCESS_TOKEN = (process.env.IG_ACCESS_TOKEN || "").trim();
 const REQUIRE_KEYWORD = (process.env.REQUIRE_KEYWORD || "").trim().toLowerCase();
 
-// Counts
-const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap
+// Counts (ONLY these)
+const PLAYER_COUNT_MAX = Number(process.env.PLAYER_COUNT_MAX || 100); // hard cap (2..100)
 const MIN_PLAYERS = 2;
+
+// Optional: protect uploads with a token (recommended)
+const VIDEO_UPLOAD_TOKEN = (process.env.VIDEO_UPLOAD_TOKEN || "").trim();
 
 // ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -46,7 +52,7 @@ app.use((req, res, next) => {
 
 // ---------------- HELPERS ----------------
 function todayIdUTC() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
 }
 
 function randSeed() {
@@ -82,24 +88,17 @@ function safeStr(s, maxLen = 80) {
   return (s ?? "").toString().slice(0, maxLen);
 }
 
-// ---- fetch with timeout (prevents “hang forever”) ----
-async function fetchJsonWithTimeout(url, timeoutMs = 8000) {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data?.error) {
-      const msg = data?.error?.message || `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return data;
-  } finally {
-    clearTimeout(t);
+// ---------------- IG HELPERS (optional) ----------------
+async function igFetchJson(url) {
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.error) {
+    const msg = data?.error?.message || JSON.stringify(data);
+    throw new Error(msg);
   }
+  return data;
 }
 
-// ---------------- IG HELPERS ----------------
 async function getLatestMedia() {
   const url =
     `https://graph.instagram.com/me/media` +
@@ -107,7 +106,7 @@ async function getLatestMedia() {
     `&limit=10` +
     `&access_token=${IG_ACCESS_TOKEN}`;
 
-  const data = await fetchJsonWithTimeout(url, 8000);
+  const data = await igFetchJson(url);
   if (!Array.isArray(data.data) || data.data.length === 0) return null;
 
   data.data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -123,7 +122,7 @@ async function getComments(mediaId) {
 
   const all = [];
   while (url) {
-    const data = await fetchJsonWithTimeout(url, 8000);
+    const data = await igFetchJson(url);
     all.push(...(data.data || []));
     url = data.paging?.next || null;
   }
@@ -164,6 +163,7 @@ function buildLivePlayersFromComments(comments, cap) {
   }
 
   const picked = shuffle(uniq).slice(0, cap);
+
   return picked.map((p, i) => ({
     slot: i + 1,
     handle: p.handle,
@@ -177,10 +177,7 @@ function buildLivePlayersFromComments(comments, cap) {
 
 // ---------------- DB HELPERS ----------------
 async function upsertRound(row) {
-  const { error } = await supabase
-    .from("rounds")
-    .upsert(row, { onConflict: "round_date" });
-
+  const { error } = await supabase.from("rounds").upsert(row, { onConflict: "round_date" });
   if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
 }
 
@@ -254,15 +251,62 @@ async function generateRound({ requestedMaxPlayers } = {}) {
     winner: null,
     winner_slot: null,
     winner_set_at: null,
+    video_url: null, // add this column in supabase if you want it stored
   };
 
   await upsertRound(row);
   return row;
 }
 
+// ---------------- VIDEO UPLOAD ----------------
+const uploadDir = path.join(process.cwd(), "public", "videos");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 120 * 1024 * 1024 }, // 120MB cap
+});
+
+app.use("/videos", express.static(path.join(process.cwd(), "public", "videos")));
+
+app.post("/api/round/today/video", upload.single("video"), async (req, res) => {
+  try {
+    // Optional security: require a token
+    if (VIDEO_UPLOAD_TOKEN) {
+      const token = safeStr(req.body?.token, 120);
+      if (token !== VIDEO_UPLOAD_TOKEN) {
+        return res.status(401).json({ ok: false, error: "Bad upload token" });
+      }
+    }
+
+    const round_date = safeStr(req.body?.round_date, 16) || todayIdUTC();
+    if (!req.file) return res.status(400).json({ ok: false, error: "Missing video file" });
+
+    const ext = (req.file.mimetype || "").includes("mp4") ? "mp4" : "webm";
+    const finalName = `zorbi_${round_date.replaceAll("-", "")}.${ext}`;
+    const finalPath = path.join(uploadDir, finalName);
+
+    fs.renameSync(req.file.path, finalPath);
+
+    const video_url = `${req.protocol}://${req.get("host")}/videos/${finalName}`;
+
+    // Save onto today's rounds row (only if the column exists)
+    try {
+      await supabase
+        .from("rounds")
+        .update({ video_url })
+        .eq("round_date", round_date);
+    } catch (_) {}
+
+    return res.json({ ok: true, video_url });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ---------------- ROUTES ----------------
 app.get("/", (req, res) => {
-  res.json({ ok: true, service: "zorbblez-backend" });
+  res.json({ ok: true, service: "zorbi-backend" });
 });
 
 app.get("/api/envcheck", (req, res) => {
@@ -276,52 +320,29 @@ app.get("/api/envcheck", (req, res) => {
     playerCountMax: PLAYER_COUNT_MAX,
     minPlayers: MIN_PLAYERS,
     gameOrigin: GAME_ORIGIN || null,
+    hasVideoUploadToken: !!VIDEO_UPLOAD_TOKEN,
   });
 });
 
-// Admin page (now shows errors)
 app.get("/admin", (req, res) => {
   res.send(`
-    <h2>Zorbblez Admin</h2>
+    <h2>Zorbi Admin</h2>
     <p>Generate today’s round (live if possible, else training).</p>
-    <p>Optional: <code>/admin/generate?max=72</code> (GET) or POST via button below.</p>
+    <p>Optional test size: <code>/admin/generate?max=72</code></p>
     <input id="key" placeholder="Admin Key" style="width:340px;padding:6px;" />
     <button onclick="gen()" style="padding:6px 10px;">Generate</button>
     <pre id="out" style="white-space:pre-wrap;"></pre>
     <script>
       async function gen(){
         const key = document.getElementById('key').value;
-        const out = document.getElementById('out');
-        out.textContent = "Working...";
-        try{
-          const res = await fetch('/admin/generate', {
-            method:'POST',
-            headers:{'x-admin-key':key}
-          });
-          const json = await res.json().catch(()=>({ ok:false, error:"Bad JSON"}));
-          out.textContent = JSON.stringify(json, null, 2);
-        }catch(e){
-          out.textContent = "Network error: " + (e && e.message ? e.message : String(e));
-        }
+        const res = await fetch('/admin/generate', {
+          method:'POST',
+          headers:{'x-admin-key':key}
+        });
+        document.getElementById('out').textContent = JSON.stringify(await res.json(), null, 2);
       }
     </script>
   `);
-});
-
-// ✅ GET fallback so you can test in browser quickly:
-// https://YOUR-RENDER/admin/generate?key=YOURKEY&max=50
-app.get("/admin/generate", async (req, res) => {
-  const key = String(req.query?.key || "");
-  if (ADMIN_KEY && key !== ADMIN_KEY) {
-    return res.status(401).json({ ok: false, error: "Unauthorized (bad key query param)" });
-  }
-  const requestedMaxPlayers = req.query?.max;
-  try {
-    const round = await generateRound({ requestedMaxPlayers });
-    res.json({ ok: true, ...round });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
 });
 
 app.post("/admin/generate", async (req, res) => {
@@ -339,6 +360,7 @@ app.post("/admin/generate", async (req, res) => {
   }
 });
 
+// Game reads today’s round
 app.get("/top50.json", async (req, res) => {
   try {
     let round = await getTodayRound();
@@ -370,6 +392,7 @@ app.post("/round/today/winner", async (req, res) => {
       .eq("round_date", round_date);
 
     if (error) return res.status(500).json({ ok: false, error: error.message });
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
