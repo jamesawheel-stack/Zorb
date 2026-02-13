@@ -1198,15 +1198,43 @@ function syncFinalGlowToCanvas(){
     }
   }
 
-  async function reportWinnerToBackend(b){
-    try{
-      await fetch(WINNER_URL, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ winner: b.handle || ("#"+b.id), winnerSlot: b.id })
+  async function reportWinnerToBackend(b) {
+  const payload = { winner: b.handle || ("#" + b.id), winnerSlot: b.id };
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(WINNER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-    }catch(_){}
+
+      const text = await res.text(); // read body even if not json
+      if (!res.ok) throw new Error(`HTTP ${res.status} • ${text}`);
+
+      // visible success
+      try {
+        toastEl.textContent = "Winner saved ✅";
+        toastPulse();
+      } catch (_) {}
+
+      return true;
+    } catch (e) {
+      // visible failure
+      try {
+        toastEl.textContent = `Winner save failed (try ${attempt})`;
+        toastPulse();
+      } catch (_) {}
+
+      console.warn("Winner POST failed:", e);
+
+      // small backoff
+      await new Promise(r => setTimeout(r, 700 * attempt));
+    }
   }
+
+  return false;
+}
 
   // -------- recording helpers --------
   function pickMimeType(){
