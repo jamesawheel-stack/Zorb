@@ -304,7 +304,7 @@ app.get("/api/envcheck", (req, res) => {
 app.get("/admin", (req, res) => {
   res.send(`
     <h2>Zorbi Admin</h2>
-    <p>Generate todayâs round (live if possible, else training).</p>
+    <p>Generate todays round (live if possible, else training).</p>
     <p>Optional test size: <code>/admin/generate?max=72</code></p>
     <input id="key" placeholder="Admin Key" style="width:340px;padding:6px;" />
     <button onclick="gen()" style="padding:6px 10px;">Generate</button>
