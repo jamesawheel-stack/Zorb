@@ -251,7 +251,11 @@ async function generateRound({ requestedMaxPlayers } = {}) {
     winner: null,
     winner_slot: null,
     winner_set_at: null,
-    video_url: null, // add this column in supabase if you want it stored
+    // video fields
+  upload_token: VIDEO_UPLOAD_TOKEN || null,
+  video_url: null,
+  video_storage_path: null,
+  error_message: null,
   };
 
   await upsertRound(row);
