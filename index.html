@@ -80,7 +80,6 @@
     .btn.small{min-width:52px;padding:10px 10px}
     .btn.wide{min-width:110px}
     .btn.primary{border-color:rgba(120,255,170,0.35);background:rgba(120,255,170,0.12)}
-    .btn.recOn{border-color:rgba(180,100,255,0.75);box-shadow:0 0 22px rgba(180,100,255,0.45)}
     .pill.purple{border-color:rgba(180,100,255,0.40);box-shadow:0 0 18px rgba(180,100,255,0.25)}
     .hidden{display:none!important}
 
@@ -128,10 +127,6 @@
     <button class="btn wide" id="btnShowPanel" type="button">Roster</button>
     <button class="btn" id="btnPause" type="button">Pause</button>
     <button class="btn" id="btnRestart" type="button">Restart</button>
-
-    <button class="btn" id="btnRec" type="button">Rec</button>
-    <button class="btn small" id="btnAutoUp" type="button" title="Auto-upload video when finished">↑</button>
-
     <button class="btn small" id="btnChaosDown" type="button">–</button>
     <button class="btn small" id="btnChaosUp" type="button">+</button>
     <button class="btn wide" id="btnHide" type="button">Hide UI</button>
@@ -235,7 +230,7 @@
 
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl;
   let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, panelVideoEl, startBtnEl;
-  let btnRecEl, btnAutoUpEl, finalGlowEl;
+  let finalGlowEl;
 
   let uiHidden=false, hideTimer=null;
 
@@ -685,12 +680,6 @@ function syncFinalGlowToCanvas(){
         playOne(sfxWinner, SFX.winner);
         winnerPlayed=true;
         (async () => {
-  try {
-    // finish the recording first (if you want the winner post to include video path/url)
-    await stopRecording(true);
-  } catch (e) {
-    console.warn("stopRecording failed", e);
-  }
 
   try {
     await reportWinnerToBackend(players[0]);
@@ -1236,15 +1225,6 @@ function syncFinalGlowToCanvas(){
     panelBackendEl.textContent = BACKEND_OK ? `Backend: OK (${CFG.playerCount})` : "Backend: offline";
     panelBackendEl.classList.toggle('ok', BACKEND_OK);
     panelBackendEl.classList.toggle('bad', !BACKEND_OK);
-
-    const recLabel = recording ? "REC" : (recEnabled ? "ready" : "off");
-    const upLabel = recAutoUpload ? "auto↑" : "manual";
-    const hasUrl = ROUND_META?.video_url ? " ✓" : "";
-    panelVideoEl.textContent = `Video: ${recLabel} • ${upLabel}${hasUrl}`;
-
-    btnRecEl.textContent = recEnabled ? (recording ? "REC●" : "Rec") : "Rec off";
-    btnAutoUpEl.textContent = recAutoUpload ? "↑" : "↧";
-    panelVideoEl.classList.toggle('purple', recording || (players.length<=5 && simState==='running'));
 
     enableStart(true);
   }
