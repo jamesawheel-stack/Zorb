@@ -26,15 +26,9 @@ const MIN_PLAYERS = 2;
 /**
  * IMPORTANT: These MUST match your Supabase ENUM values exactly.
  * Set these as Render env vars so you never have to edit code again.
- *
- * Example values (yours may differ):
- *  - ROUND_STATUS_PENDING="pending"
- *  - ROUND_STATUS_DONE="complete"   (or "completed" / "finished")
- *  - ROUND_MODE_TRAINING="training"
- *  - ROUND_MODE_LIVE="live"         (or "ig" / "production")
  */
 const ROUND_STATUS_PENDING = (process.env.ROUND_STATUS_PENDING || "pending").trim();
-const ROUND_STATUS_DONE = (process.env.ROUND_STATUS_DONE || "complete").trim();
+const ROUND_STATUS_DONE = (process.env.ROUND_STATUS_DONE || "rendered").trim();
 
 const ROUND_MODE_TRAINING = (process.env.ROUND_MODE_TRAINING || "training").trim();
 const ROUND_MODE_LIVE = (process.env.ROUND_MODE_LIVE || "live").trim();
