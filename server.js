@@ -118,7 +118,7 @@ async function igFetchJson(url) {
 
 async function getLatestMedia() {
   const url =
-    `https://graph.instagram.com/me/media` +
+    `https://graph.facebook.com/v24.0/me/media` +
     `?fields=id,permalink,timestamp,caption` +
     `&limit=10` +
     `&access_token=${IG_ACCESS_TOKEN}`;
