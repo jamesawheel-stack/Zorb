@@ -28,6 +28,10 @@ const MIN_PLAYERS = 2;
 // Optional: protect uploads with a token (recommended)
 const VIDEO_UPLOAD_TOKEN = (process.env.VIDEO_UPLOAD_TOKEN || "").trim();
 
+// Supabase Storage for videos
+const VIDEO_BUCKET = (process.env.VIDEO_BUCKET || "").trim();
+const VIDEO_BUCKET_PUBLIC = (process.env.VIDEO_BUCKET_PUBLIC || "").trim(); // optional public base URL
+
 // ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.warn("⚠️ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -273,40 +277,123 @@ const upload = multer({
 
 app.use("/videos", express.static(path.join(process.cwd(), "public", "videos")));
 
+// Upload today's round video (stores in Supabase Storage bucket if configured)
 app.post("/api/round/today/video", upload.single("video"), async (req, res) => {
   try {
-    // Optional security: require a token
+    const round_date = todayIdUTC();
+
+    // Optional token gate (recommended)
     if (VIDEO_UPLOAD_TOKEN) {
-      const token = safeStr(req.body?.token, 120);
+      const token = (req.body?.token || "").trim();
       if (token !== VIDEO_UPLOAD_TOKEN) {
-        return res.status(401).json({ ok: false, error: "Bad upload token" });
+        return res.status(401).json({ ok: false, error: "Unauthorized" });
       }
     }
 
-    const round_date = safeStr(req.body?.round_date, 16) || todayIdUTC();
     if (!req.file) return res.status(400).json({ ok: false, error: "Missing video file" });
 
-    const ext = (req.file.mimetype || "").includes("mp4") ? "mp4" : "webm";
-    const finalName = `zorbi_${round_date.replaceAll("-", "")}.${ext}`;
-    const finalPath = path.join(uploadDir, finalName);
+    const ct = req.file.mimetype || "video/mp4";
+    const ext = ct.includes("mp4") ? "mp4" : (ct.includes("webm") ? "webm" : "bin");
 
-    fs.renameSync(req.file.path, finalPath);
+    // Use provided filename if present, else deterministic
+    const safeName = safeStr(req.file.originalname || `zorbi_${round_date}.${ext}`, 120).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storage_path = `round_videos/${round_date}/${safeName}`;
 
-    const video_url = `${req.protocol}://${req.get("host")}/videos/${finalName}`;
+    let video_url = null;
 
-    // Save onto today's rounds row (only if the column exists)
-    try {
-      await supabase
-        .from("rounds")
-        .update({ video_url })
-        .eq("round_date", round_date);
-    } catch (_) {}
+    if (VIDEO_BUCKET) {
+      // Upload to Supabase Storage
+      const { error: upErr } = await supabase.storage
+        .from(VIDEO_BUCKET)
+        .upload(storage_path, req.file.buffer, {
+          contentType: ct,
+          upsert: true,
+          cacheControl: "3600",
+        });
 
-    return res.json({ ok: true, video_url });
+      if (upErr) {
+        return res.status(500).json({ ok: false, error: `Storage upload failed: ${upErr.message}` });
+      }
+
+      if (VIDEO_BUCKET_PUBLIC) {
+        // If you set this to the bucket's public base URL, we can build a URL directly
+        // Example: https://<project>.supabase.co/storage/v1/object/public/zorbi-video
+        video_url = `${VIDEO_BUCKET_PUBLIC.replace(/\/$/, "")}/${storage_path}`;
+      } else {
+        const pub = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(storage_path);
+        video_url = pub?.data?.publicUrl || null;
+      }
+    } else {
+      // Fallback (local disk) - useful for local dev only
+      const uploadsDir = path.join(process.cwd(), "uploads");
+      await fs.promises.mkdir(uploadsDir, { recursive: true });
+      const localPath = path.join(uploadsDir, safeName);
+      await fs.promises.writeFile(localPath, req.file.buffer);
+      video_url = `/videos/${encodeURIComponent(safeName)}`;
+    }
+
+    // Persist on rounds table
+    const { error } = await supabase
+      .from("rounds")
+      .update({
+        video_url,
+        video_storage_path: storage_path,
+        video_storage_bucket: VIDEO_BUCKET || null,
+        video_uploaded_at: new Date().toISOString(),
+      })
+      .eq("round_date", round_date);
+
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+
+    res.json({ ok: true, round_date, video_url, storage_path });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+// Get today's round video URL (if uploaded)
+app.get("/api/round/today/video", async (req, res) => {
+  try {
+    const round_date = todayIdUTC();
+    const { data, error } = await supabase
+      .from("rounds")
+      .select("round_date, video_url, video_storage_path, video_uploaded_at")
+      .eq("round_date", round_date)
+      .single();
+
+    if (error) return res.status(404).json({ ok: false, error: "No round found for today" });
+    res.json({ ok: true, ...data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+// Get a signed (temporary) download URL for today's video (works even if bucket is private)
+app.get("/api/round/today/video/signed", async (req, res) => {
+  try {
+    const round_date = todayIdUTC();
+    const { data, error } = await supabase
+      .from("rounds")
+      .select("video_storage_bucket, video_storage_path")
+      .eq("round_date", round_date)
+      .single();
+
+    if (error || !data?.video_storage_bucket || !data?.video_storage_path) {
+      return res.status(404).json({ ok: false, error: "No video uploaded for today" });
+    }
+
+    const expiresIn = clampInt(req.query?.expires || 86400, 60, 7 * 86400); // default 24h
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(data.video_storage_bucket)
+      .createSignedUrl(data.video_storage_path, expiresIn);
+
+    if (sErr) return res.status(500).json({ ok: false, error: sErr.message });
+
+    res.json({ ok: true, url: signed?.signedUrl || null, expires_in: expiresIn });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 
 // ---------------- ROUTES ----------------
 app.get("/", (req, res) => {
@@ -325,6 +412,8 @@ app.get("/api/envcheck", (req, res) => {
     minPlayers: MIN_PLAYERS,
     gameOrigin: GAME_ORIGIN || null,
     hasVideoUploadToken: !!VIDEO_UPLOAD_TOKEN,
+    hasVideoBucket: !!VIDEO_BUCKET,
+    hasVideoBucketPublic: !!VIDEO_BUCKET_PUBLIC,
   });
 });
 
