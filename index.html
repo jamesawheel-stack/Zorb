@@ -235,6 +235,7 @@
   let audioUnlocked=false;
   let sfxPop=[], sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension;
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
+  let reloadTimer=null;
 
   const SFX={ master:0.90, pop:0.65, fire:0.65, reload:0.45, bass:0.75, woosh:0.55, tensionMax:0.55, winner:0.95 };
 
@@ -478,19 +479,6 @@
     userStartAudio();
     audioUnlocked = true;
     resumeAudioNow();
-
-    // Route game audio into the recorder (while still playing to speakers)
-    try {
-      const ctx = getAudioContext?.();
-      if (ctx && !audioStreamDest) {
-        audioStreamDest = ctx.createMediaStreamDestination();
-        // p5.sound master output
-        if (window.p5 && window.p5.soundOut && window.p5.soundOut.output) {
-          window.p5.soundOut.output.connect(audioStreamDest);
-        }
-      }
-    } catch (e) {}
-
     if(sfxTension){
       sfxTension.setLoop(true);
       sfxTension.setVolume(0);
@@ -562,36 +550,27 @@
     finalGlowEl.style.height = r.height + "px";
   }
 
-    // Finale border glow (pulses when final 5) — sized to the CANVAS (not the full browser window)
-  function updateFinaleGlow() {
-    if (!finalGlowEl) return;
-
-    const cnv = document.querySelector("canvas");
-    if (!cnv) return;
-
-    const r = cnv.getBoundingClientRect();
-    finalGlowEl.style.left = `${Math.round(r.left)}px`;
-    finalGlowEl.style.top = `${Math.round(r.top)}px`;
-    finalGlowEl.style.width = `${Math.round(r.width)}px`;
-    finalGlowEl.style.height = `${Math.round(r.height)}px`;
+  function updateFinaleGlow(){
+    if(!finalGlowEl) return;
 
     const isFinale = (simState === "running" && players.length <= 5);
     finalGlowEl.classList.toggle('on', isFinale);
 
-    if (!isFinale) {
-      finalGlowEl.style.boxShadow = "0 0 0 0 rgba(0,0,0,0) inset";
-      return;
-    }
+    // keep bounds correct on desktop where canvas isn't full-screen
+    updateCanvasGlowBounds(false);
 
-    // Inward-facing pulse so it shows up in recordings
+    if(!isFinale) return;
+
     const t = frameCount * 0.06;
-    const pulse = (sin(t) * 0.5 + 0.5); // 0..1
-    const a1 = 0.25 + pulse * 0.40;     // inner frame
-    const a2 = 0.12 + pulse * 0.28;     // inner bloom
+    const pulse = (sin(t)*0.5+0.5);
+    const a1 = 0.18 + pulse*0.32;
+    const a2 = 0.22 + pulse*0.55;
+    const a3 = 0.16 + pulse*0.55;
 
     finalGlowEl.style.boxShadow =
-      `0 0 0 4px rgba(180, 70, 255, ${a1}) inset,
-       0 0 22px rgba(180, 70, 255, ${a2}) inset`;
+      `0 0 0 3px rgba(180, 70, 255, ${a1}) inset,
+       0 0 32px rgba(180, 70, 255, ${a2}),
+       0 0 90px rgba(255, 0, 200, ${a3})`;
   }
 
   function resetSim(keepSetupState){
@@ -890,67 +869,101 @@
     text("Zorbi begins…", width*0.5, height*0.56);
   }
 
+  
   function drawWinner(b){
-    noStroke(); fill(0,0,0,120); rect(0,0,width,height);
+    noStroke();
+    fill(0,0,0,120);
+    rect(0,0,width,height);
 
-    const cx=width*0.5, cy=height*0.52;
-    const R=min(width,height)*0.23;
+    const cx = width*0.5, cy = height*0.52;
+    const R  = min(width, height) * 0.23;
     const pulse = sin(frameCount*0.06)*0.5+0.5;
 
+    // Purple outer glow burst
     noStroke();
-    fill(160,80,255, 40 + pulse*50);
-    circle(cx,cy, R*2.8 + pulse*30);
+    fill(160, 80, 255, 40 + pulse*50);
+    circle(cx, cy, R*2.8 + pulse*30);
 
+    // Main ring
     stroke(190,245,255,140);
     strokeWeight(5);
     fill(255,255,255,14);
-    circle(cx,cy, R*2);
+    circle(cx, cy, R*2);
 
+    // Bubble shine
     noStroke();
     fill(255,255,255,58);
     ellipse(cx - R*0.28, cy - R*0.32, R*1.05, R*0.68);
 
-    // winner label in bubble
+    // Bubble content
     {
-      const label = (b.handle ? "@"+b.handle : String(b.id));
-      let ts = R*0.52;
-      if(label.length>8) ts = R*0.38;
-      if(label.length>12) ts = R*0.32;
+      const label = (b.handle ? "@" + b.handle : String(b.id));
+      let ts = R * 0.52;
+      if (label.length > 8) ts = R * 0.38;
+      if (label.length > 12) ts = R * 0.32;
 
-      textAlign(CENTER,CENTER);
-      stroke(0,0,0,180); strokeWeight(8);
-      fill(255,255,255,245); textSize(ts);
-      text(label, cx, cy+6);
-      noStroke(); fill(255,255,255,245);
-      text(label, cx, cy+6);
+      textAlign(CENTER, CENTER);
+      textSize(ts);
+
+      // crisp white with soft purple glow (no chunky black stroke)
+      drawingContext.save();
+      drawingContext.shadowBlur = 22;
+      drawingContext.shadowColor = "rgba(180, 90, 255, 0.85)";
+      fill(255,255,255,250);
+      text(label, cx, cy + 6);
+      drawingContext.restore();
     }
 
-    // WINNER banner
-    const by = height*0.16;
-    noStroke(); rectMode(CENTER);
-    fill(255,0,200, 70 + pulse*60); rect(cx, by, width*0.72, 62, 18);
-    fill(160,80,255, 40 + pulse*40); rect(cx, by, width*0.76, 70, 18);
+    // ===== WINNER HEADER (banner + glow) =====
+    const by = height * 0.16;
+    const bannerW = min(width * 0.88, 520);
+    const bannerH = 62;
 
-    textAlign(CENTER,CENTER);
+    rectMode(CENTER);
+    noStroke();
+
+    // layered glow fills
+    fill(160, 80, 255, 38 + pulse*42);
+    rect(cx, by, bannerW + 18, bannerH + 10, 18);
+
+    fill(255, 0, 200, 60 + pulse*65);
+    rect(cx, by, bannerW, bannerH, 18);
+
+    // text with glow
+    textAlign(CENTER, CENTER);
     textSize(40);
-    stroke(0,0,0,180); strokeWeight(10);
-    fill(255,255,255,245); text("WINNER!", cx, by);
-    noStroke(); fill(255,255,255,245); text("WINNER!", cx, by);
 
-    // handle line + CTA
-    const hLabel = (b.handle ? "@"+b.handle : ("#"+b.id));
+    drawingContext.save();
+    drawingContext.shadowBlur = 26;
+    drawingContext.shadowColor = "rgba(255, 0, 200, 0.65)";
+    fill(255,255,255,250);
+    text("WINNER!", cx, by);
+    drawingContext.restore();
+
+    // ===== HANDLE DISPLAY =====
+    const hLabel = (b.handle ? "@" + b.handle : ("#" + b.id));
     textSize(24);
-    stroke(0,0,0,170); strokeWeight(8);
-    fill(170,240,255,245); text(hLabel, cx, height*0.24);
-    noStroke(); fill(170,240,255,245); text(hLabel, cx, height*0.24);
 
+    drawingContext.save();
+    drawingContext.shadowBlur = 18;
+    drawingContext.shadowColor = "rgba(120, 220, 255, 0.80)";
+    fill(170, 240, 255, 250);
+    text(hLabel, cx, height*0.24);
+    drawingContext.restore();
+
+    // ===== FOLLOW CTA =====
     textSize(16);
-    stroke(0,0,0,150); strokeWeight(6);
-    fill(220,200,255,245);
-    text('Follow @Zorbi.ai + comment “IN” to enter tomorrow', cx, height*0.29);
-    noStroke(); fill(220,200,255,245);
-    text('Follow @Zorbi.ai + comment “IN” to enter tomorrow', cx, height*0.29);
+
+    drawingContext.save();
+    drawingContext.shadowBlur = 14;
+    drawingContext.shadowColor = "rgba(180, 90, 255, 0.55)";
+    fill(230, 210, 255, 250);
+    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', cx, height*0.29);
+    drawingContext.restore();
+
+    rectMode(CORNER);
   }
+
 
   function drawBubbleLabel(label, x, y, r){
     label = String(label||"");
@@ -1142,16 +1155,15 @@
   }
 
   function cueReloadAfterPop(){
-    const now = performance.now();
-    if(now - lastReloadSfxAt < 220) return; // don't spam
-    lastReloadSfxAt = now;
-    setTimeout(()=>{
-      // don't play reload if run already ended
-      if(simState !== "running") return;
-      if(players.length <= 1) return;
-      // reload sound is cued after a hit, not on aim-lock
-          
-    }, 140); // feels like "quick reload" after pop
+    // Play *once* shortly after the last pop in a multi-elimination burst.
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      if (simState !== "running") return;
+      if (players.length <= 1) return;
+      try { sfxReload?.stop?.(); } catch(_) {}
+      playOne(sfxReload, SFX.reload);
+      reloadTimer = null;
+    }, 170);
   }
 
   function popBubble(b){
@@ -1215,13 +1227,8 @@
       if(!cnv || !cnv.captureStream) return;
 
       const stream = cnv.captureStream(30);
-      // Add game audio track (best-effort)
-      try {
-        const aTracks = audioStreamDest?.stream?.getAudioTracks?.() || [];
-        for (const t of aTracks) stream.addTrack(t);
-      } catch (e) {}
       const mimeType = pickMimeType();
-      const opts = { mimeType, videoBitsPerSecond: 4_500_000, audioBitsPerSecond: 128_000 };
+      const opts = { mimeType, videoBitsPerSecond: 2_500_000 };
 
       recChunks=[];
       mediaRecorder = new MediaRecorder(stream, opts);
@@ -1278,21 +1285,11 @@
       const data = await res.json().catch(()=>({}));
       if(!res.ok || !data?.ok) throw new Error(data?.error || ("HTTP "+res.status));
 
-      // If the bucket is public, server may return a public URL. If not, we can ask for a signed URL.
-      if (data.video_url) {
+      if(data.video_url){
         ROUND_META.video_url = data.video_url;
-      } else {
-        try {
-          const r2 = await fetch(BACKEND_BASE + "/api/round/today/video/signed");
-          const j2 = await r2.json().catch(()=>({}));
-          if (r2.ok && j2?.ok && j2?.url) ROUND_META.video_url = j2.url;
-        } catch (e) {}
+        toastEl.textContent = "Uploaded • video ready on backend";
+        toastPulse();
       }
-
-      toastEl.textContent = ROUND_META.video_url
-        ? "Uploaded • video link ready"
-        : "Uploaded • (no public link yet)";
-      toastPulse();
     }catch(e){
       console.warn("Upload failed:", e);
       toastEl.textContent = "Upload failed • (backend route missing). Video kept locally only.";
