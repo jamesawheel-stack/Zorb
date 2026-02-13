@@ -369,7 +369,6 @@
     window.addEventListener('focus', ()=> onReturnToApp());
 
     document.body.addEventListener('click', ()=>{
-  
       // Unlock audio context
   if(!audioUnlocked){
     userStartAudio();
@@ -415,19 +414,21 @@
       if(!musicStarted){
         musicStarted = true;
         
+        try { sfxMusic.stop(); } catch(_) {}
+        sfxMusic.playMode('restart');
         sfxMusic.setLoop(true);
-        sfxMusic.setVolume(0);
+        sfxMusic.amp(0, 0);
+        
         try { sfxMusic.play(); } catch(_) {}
 
-        sfxMusic.amp(MUSIC.peak, MUSIC.fadeInMs/1000);
-        setTimeout(()=>{
-          sfxMusic.amp(MUSIC.bed, MUSIC.fadeDownMs/1000);
-        }, MUSIC.fadeInMs + MUSIC.holdMs);
+        sfxMusic.amp(MUSIC.bed, MUSIC.fadeInMs/1000);
+        
       } else {
-        sfxMusic.amp(MUSIC.bed, 0.8);
+        sfxMusic.amp(MUSIC.bed, 0.4);
       }
     } else {
-      try { sfxMusic.amp(0, 1.0); } catch(_) {}
+      try { sfxMusic.amp(0, 0.6); } catch(_) {}
+       setTimeout(() => { try {sfxMusic.stop(); } catch(_) {} }, 700);
     }
   }
     
