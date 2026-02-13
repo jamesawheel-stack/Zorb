@@ -399,26 +399,45 @@ app.get("/leaderboard.json", async (req, res) => {
   res.json(sorted);
 });
 
-// IG bio helper (5 lines, yesterday winner)
+// IG bio helper (5-line bio + most recent completed winner)
 app.get("/bio.txt", async (req, res) => {
   try {
-    const y = yesterdayIdUTC();
-    const yd = await getRoundByDate(y);
-    const yWinner = yd?.winner ? `@${yd.winner}` : "TBD";
+    // Get most recent completed round winner
+    const { data, error } = await supabase
+      .from("rounds")
+      .select("round_date,winner,status")
+      .eq("status", "complete")
+      .not("winner", "is", null)
+      .order("round_date", { ascending: false })
+      .limit(1);
+
+    if (error) throw new Error(error.message);
+
+    const latest = (data && data[0]) ? data[0] : null;
+    const winnerHandle = latest?.winner ? String(latest.winner).trim() : "";
+    const winnerLine = winnerHandle ? `🏆 Yesterday: @${winnerHandle.replace(/^@/, "")}` : "🏆 Yesterday: TBD";
+
+    const bio =
+`🫧 Only 1 bubble survives.
+🤖 Arcade elimination arena
+⚡ New round daily
+${winnerLine}
+👇 Follow + comment “IN” to enter`;
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.send(
-      `ð«§ Only 1 bubble survives.\n` +
-        `ð¤ Arcade elimination arena\n` +
-        `â¡ New round daily\n` +
-        `ð Yesterday: ${yWinner}\n` +
-        `ð Follow + comment âINâ to enter`
-    );
+    res.send(bio);
   } catch (e) {
-    res.status(500).send("Error");
+    // Fallback if anything fails
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.send(
+`🫧 Only 1 bubble survives.
+🤖 Arcade elimination arena
+⚡ New round daily
+🏆 Yesterday: TBD
+👇 Follow + comment “IN” to enter`
+    );
   }
 });
-
 // ---------------- VIDEO UPLOAD ----------------
 const upload = multer({
   storage: multer.diskStorage({
