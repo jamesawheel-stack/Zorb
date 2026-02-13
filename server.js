@@ -370,33 +370,40 @@ app.get("/round/today/winner", async (req, res) => {
   }
 });
 
-// 5-line IG bio text (yesterday winner)
+// 5-line IG bio text (latest winner)
 app.get("/bio.txt", async (req, res) => {
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  // prevent iOS / proxies caching stale bio
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+
   try {
-    const yday = yesterdayIdUTC();
+    // Find most recent round that actually has a winner
     const { data, error } = await supabase
       .from("rounds")
-      .select("winner,round_date")
-      .eq("round_date", yday)
-      .single();
+      .select("round_date,winner")
+      .not("winner", "is", null)
+      .order("round_date", { ascending: false })
+      .limit(1);
 
-    const yWinner = (!error && data?.winner) ? `@${data.winner}` : "TBD";
+    const latest = (!error && Array.isArray(data) && data[0]) ? data[0] : null;
+    const latestWinner = latest?.winner ? `@${String(latest.winner).trim()}` : "TBD";
 
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.send(
 `🫧 Only 1 bubble survives.
 🤖 Arcade elimination arena
 ⚡ New round daily
-🏆 Yesterday: ${yWinner}
+🏆 Latest winner: ${latestWinner}
 👇 Follow + comment “IN” to enter`
     );
   } catch (e) {
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.send(
 `🫧 Only 1 bubble survives.
 🤖 Arcade elimination arena
 ⚡ New round daily
-🏆 Yesterday: TBD
+🏆 Latest winner: TBD
 👇 Follow + comment “IN” to enter`
     );
   }
