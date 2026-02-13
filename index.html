@@ -337,22 +337,22 @@
   }
 
   function createOrResizeCanvas(){
-    const targetH = minfffffff(windowHeight, CFG.baseHeight);
-    const targetW = targetH * (CFG.aspectW/CFG.aspectH);
-    const w = min(windowWidth, targetW);
-    const h = w * (CFG.aspectH/CFG.aspectW);
-    createCanvas(floor(w), floor(h));
+  const targetH = Math.min(windowHeight, CFG.baseHeight);
+  const targetW = targetH * (CFG.aspectW/CFG.aspectH);
+  const w = Math.min(windowWidth, targetW);
+  const h = w * (CFG.aspectH/CFG.aspectW);
+  createCanvas(Math.floor(w), Math.floor(h));
 
-    const dpr = window.devicePixelRatio || 2;
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const pd = isIOS ? Math.min(1.5, dpr) : Math.min(2, dpr);
-    pixelDensity(pd);
+  const dpr = window.devicePixelRatio || 2;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const pd = isIOS ? Math.min(1.5, dpr) : Math.min(2, dpr);
+  pixelDensity(pd);
 
-    stars=[];
-    for(let i=0;i<120;i++){
-      stars.push({x:random(width),y:random(height),r:random(0.8,2.2),tw:random(TAU),sp:random(0.006,0.02)});
-    }
+  stars=[];
+  for(let i=0;i<120;i++){
+    stars.push({x:random(width),y:random(height),r:random(0.8,2.2),tw:random(TAU),sp:random(0.006,0.02)});
   }
+}
 
   function hookUI(){
     hudEl = document.getElementById('hud');
