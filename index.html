@@ -370,7 +370,7 @@
     if(sfxMusic){
       try{
         sfxMusic.setLoop(true);
-        sfxMusic.setVolume(0);
+        sfxMusic.amp(0);
         sfxMusic.play();
         sfxMusic.amp(0.28, 1.2); // fade in
       }catch(_){}
@@ -454,7 +454,7 @@
     try{
       if(sfxMusic){
         sfxMusic.setLoop(true);
-        sfxMusic.setvolume(0); //start silent and fade in
+        sfxMusic.amp(0); //start silent and fade in
         if(!sfxMusic.isPlaying()) sfxMusic.play();
       }
     }catch(_){}
