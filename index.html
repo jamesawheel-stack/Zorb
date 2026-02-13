@@ -374,28 +374,11 @@
   if(!audioUnlocked){
     userStartAudio();
     audioUnlocked = true;
+    setMusicOn(true);
   }
 
   resumeAudioNow();
       
-  //Start background music ON FIRST TAP ONLY
-  if (!musicStarted && sfxMusic) {
-    musicStarted = true;
-
-    sfxMusic.setVolume(0);
-    sfxMusic.setloop(true);
-
-    try { sfxMusic.play(); } catch(_) {}
-
-    //fade up
-    sfxMusic.amp(0.55, 1.0);
-
-    //then fade down to bed
-    setTimeout(() => {
-      sfxMusic.amp(0.18, 1.4);
-    }, 2200);
-  }
-
   // existing logic
   if(simState === 'running' || simState === 'countdown') requestWakeLock();
 
@@ -424,6 +407,30 @@
   function showPanel(show){ panelEl.classList.toggle('hidden', !show); }
   function togglePause(){ if(simState !== "setup") paused = !paused; }
 
+  function setMusicOn(on){
+    if(!sfxMusic) return;
+    if(!audioUnlocked) return;
+
+    if(on){
+      if(!musicStarted){
+        musicStarted = true;
+
+        sfxMusic.setVolume(0);
+        sfxMusic.setLoop(true);
+        try { sfxMusic.play(); } catch(_) {}
+
+        sfxMusic.amp(MUSIC.peak, MUSIC.fadeInMs/1000);
+        setTimeout(()=>{
+          sfxMusic.amp(MUSIC.bed, MUSIC.fadeDownMs/1000);
+        }, Music.fadeInMs + MUSIC.holdMs);
+      } else {
+        sfxMusic.amp(MUSIC.bed, 0.8);
+      }
+    } else {
+      try { sfxMusic.amp(0, 1.0); } catch(_) {}
+    }
+  }
+    
   function beginCountdown(){
     unlockAudioOnce();
     setMusicOn(true);
@@ -465,6 +472,7 @@
 
   function unlockAudioOnce(){
     if(audioUnlocked) return;
+    
     userStartAudio();
     audioUnlocked = true;
     resumeAudioNow();
@@ -473,7 +481,7 @@
     if(sfxTension){
       sfxTension.setLoop(true);
       sfxTension.setVolume(0);
-      sfxTension.play();
+      try { sfxTension.play(); } catch(_) {}
     }
     updatePanelStatusThrottled(true);
   }
