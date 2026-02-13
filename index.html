@@ -711,9 +711,22 @@ function syncFinalGlowToCanvas(){
       if(!winnerPlayed){
         playOne(sfxWinner, SFX.winner);
         winnerPlayed=true;
-        stopRecording(true).catch(()=>{});
-        await reportWinnerToBackend(players[0]));
-        releaseWakeLock();
+        (async () => {
+  try {
+    // finish the recording first (if you want the winner post to include video path/url)
+    await stopRecording(true);
+  } catch (e) {
+    console.warn("stopRecording failed", e);
+  }
+
+  try {
+    await reportWinnerToBackend(players[0]);
+  } catch (e) {
+    console.error("reportWinnerToBackend failed", e);
+  } finally {
+    releaseWakeLock();
+  }
+})();
       }
     }
   }
