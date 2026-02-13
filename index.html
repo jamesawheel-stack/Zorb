@@ -243,6 +243,16 @@
     countdownSec: 3,
   };
 
+
+  // ---------------- DYNAMIC BUBBLE SIZING ----------------
+  // Keeps visuals clean at high player counts while staying cinematic at low counts.
+  function getDynamicBubbleSize(count) {
+    if (count <= 30) return { min: 50, max: 68 };
+    if (count <= 60) return { min: 42, max: 58 };
+    if (count <= 80) return { min: 34, max: 46 };
+    return { min: 28, max: 38 }; // 81–100 players
+  }
+
   let audioUnlocked = false;
   let sfxPop = [];
   let sfxWinner, sfxReload, sfxFire, sfxBass, sfxWoosh, sfxTension;
@@ -629,7 +639,8 @@ let rosterHandles = [];
     const marginX = 18;
 
     for (let i = 0; i < count; i++) {
-      const r = random(CFG.bubbleMinR, CFG.bubbleMaxR);
+      const size = getDynamicBubbleSize(count);
+      const r = random(size.min, size.max);
 
       let x = width * 0.5, y = (topBound + height) * 0.5;
       let ok = false;
