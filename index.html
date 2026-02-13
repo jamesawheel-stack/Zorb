@@ -712,7 +712,7 @@ function syncFinalGlowToCanvas(){
         playOne(sfxWinner, SFX.winner);
         winnerPlayed=true;
         stopRecording(true).catch(()=>{});
-        reportWinnerToBackend(players[0]).catch(()=>{});
+        await reportWinnerToBackend(players[0]));
         releaseWakeLock();
       }
     }
