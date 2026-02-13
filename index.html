@@ -185,10 +185,21 @@
   };
 
   function getDynamicBubbleSize(count){
-    if(count<=30) return {min:50,max:68};
-    if(count<=60) return {min:42,max:58};
-    if(count<=80) return {min:34,max:46};
-    return {min:28,max:38};
+    // Designed for 9:16 — at 100 bubbles they’re intentionally small (names basically unreadable),
+    // then they smoothly grow as the field thins.
+    if(count<=20)  return {min:62,max:84};
+    if(count<=40)  return {min:50,max:70};
+    if(count<=60)  return {min:40,max:56};
+    if(count<=100) return {min:22,max:32};
+    return {min:16,max:22};
+  }
+
+  function labelAlphaForRemaining(remaining, r){
+    // Names fade in as bubbles get larger / fewer remain.
+    // 100 -> hidden, 60 -> faint, 30 -> readable, 15 -> full
+    const byCount = constrain(map(remaining, 100, 30, 0, 255), 0, 255);
+    const bySize  = constrain(map(r, 18, 34, 0, 255), 0, 255);
+    return Math.min(byCount, bySize);
   }
 
   let audioUnlocked=false;
@@ -213,6 +224,11 @@
   let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0 };
   let simState="setup";
   let countdownFrames=0;
+
+  let initialPlayerCount = 0;
+
+  // Visual-only “extra entrants” dots when claimed_total > finale_count (keeps sim fast)
+  let extraDots = []; // {x,y,r,a}
 
   // Confetti (win moment)
   let confetti = [];
@@ -553,6 +569,24 @@
     countdownFrames = 0;
 
     const count = max(2, CFG.playerCount);
+    initialPlayerCount = count;
+
+    // Build extra dots (visual-only) if we had more entrants than we can render as full bubbles.
+    // These fade away as the real bubbles get eliminated so the transition feels seamless.
+    extraDots = [];
+    const claimed = Number(ROUND_META?.claimed_total || 0);
+    const extra = Math.max(0, claimed - count);
+    if(extra > 0){
+      const capDots = Math.min(650, extra); // perf cap
+      for(let i=0;i<capDots;i++){
+        extraDots.push({
+          x: random(10, width-10),
+          y: random(height*0.30, height-10),
+          r: random(1.2, 2.6),
+          a: random(40, 110)
+        });
+      }
+    }
     const ids = Array.from({length:count}, (_,i)=>i+1);
 
     const topBound = height*0.30;
@@ -562,7 +596,8 @@
 
     for(let i=0;i<count;i++){
       const size = getDynamicBubbleSize(count);
-      const r = random(size.min, size.max);
+      const rSeed = random();
+      const r = lerp(size.min, size.max, rSeed);
 
       let x = width*0.5, y=(topBound+height)*0.5;
       let ok=false;
@@ -579,7 +614,7 @@
       }
 
       const handle = rosterHandles[i] || ("#" + ids[i]);
-      players.push(new Bubble(ids[i], handle, x, y, r));
+      players.push(new Bubble(ids[i], handle, x, y, r, rSeed));
     }
 
     updatePanelStatusThrottled(true);
@@ -640,14 +675,21 @@
 
     zorb.fireCooldown -= deltaTime/1000;
     if(zorb.fireCooldown<=0 && players.length>1){
-      let rate = CFG.fireRate;
-      if(players.length<=5) rate = CFG.fireRateFinal;
-      if(players.length<=2) rate = CFG.fireRateFinal2;
+      // Pace scales with a bigger roster so the video gets to the finals faster.
+      const baseMult = constrain(map(initialPlayerCount, 50, 100, 1.0, 1.9), 1.0, 2.2);
+      const remainingMult = constrain(map(players.length, initialPlayerCount, 20, 1.0, 0.72), 0.72, 1.0);
+
+      let rate = CFG.fireRate * baseMult * remainingMult;
+
+      if(players.length<=5) rate = CFG.fireRateFinal;   // slow down for finals
+      if(players.length<=2) rate = CFG.fireRateFinal2;  // even slower for last 2
 
       if(players.length<=5 && frameCount % CFG.slowMoFrames < 10){
       }else{
         if(zorb.charge<=0){
-          zorb.charge = CFG.chargeTime;
+          // Slightly shorter “charge” early when the roster is huge
+          const chargeMult = constrain(map(initialPlayerCount, 50, 100, 1.0, 0.70), 0.65, 1.0);
+          zorb.charge = Math.max(5, Math.round(CFG.chargeTime * chargeMult));
 
           const t = pickTarget();
           zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
@@ -752,6 +794,8 @@
     drawStars();
     if(CFG.vignette) drawVignette();
 
+    drawExtraDots();
+
     for(const p of projectiles) p.draw();
     for(const b of players) b.draw();
     drawZorb();
@@ -786,6 +830,20 @@
       rect(-i,-i, width+2*i, height+2*i, 22);
     }
   }
+
+  function drawExtraDots(){
+    if(!extraDots || extraDots.length===0) return;
+
+    // Fade out the extra-dot layer as we approach the finals so it feels like the crowd thins.
+    const fade = constrain(map(players.length, 100, 20, 1, 0), 0, 1);
+
+    noStroke();
+    for(const d of extraDots){
+      fill(180,200,255, d.a * 0.6 * fade);
+      circle(d.x, d.y, d.r);
+    }
+  }
+
 
   function drawFinaleFrameGlow(){
     if(!(simState === "running" && players.length <= 5)) return;
@@ -962,7 +1020,7 @@
     rectMode(CORNER);
   }
 
-  function drawBubbleLabel(label, x, y, r){
+  function drawBubbleLabel(label, x, y, r, alpha){
     label = String(label||"");
     let shown = label;
     if(shown.length>14) shown = shown.slice(0,13)+"…";
@@ -972,20 +1030,22 @@
     if(shown.length>10) ts = r*0.34;
 
     textAlign(CENTER,CENTER);
-    stroke(0,0,0,180); strokeWeight(6);
-    fill(255,255,255,245); textSize(ts);
+    const a = (alpha==null)?255:alpha;
+    stroke(0,0,0, min(200, a*0.85)); strokeWeight(6);
+    fill(255,255,255, min(255, a)); textSize(ts);
     text(shown, x, y);
 
-    stroke(255,255,255,90); strokeWeight(2);
-    fill(255,255,255,245);
+    stroke(255,255,255, min(140, a*0.45)); strokeWeight(2);
+    fill(255,255,255, min(255, a));
     text(shown, x, y);
   }
 
   class Bubble{
-    constructor(id, handle, x, y, r){
+    constructor(id, handle, x, y, r, rSeed=0.5){
       this.id=id;
       this.handle=handle||null;
       this.x=x; this.y=y; this.r=r;
+      this.rSeed = rSeed;
 
       this.v=createVector(random(-1,1), random(-1,1)).mult(random(0.6,1.6));
       this.wob=random(TAU);
@@ -996,6 +1056,11 @@
     }
 
     update(){
+      // Smoothly scale bubble size as the field shrinks (seamless from 100 -> finals)
+      const size = getDynamicBubbleSize(players.length);
+      const targetR = lerp(size.min, size.max, this.rSeed);
+      this.r = lerp(this.r, targetR, 0.08);
+
       const f = p5.Vector.random2D().mult(0.16*CFG.chaos);
       this.v.add(f);
 
@@ -1059,7 +1124,8 @@
       ellipse(0,0, this.r*2*wobble, this.r*2*(2-wobble));
 
       const label = this.handle ? ("@"+this.handle) : String(this.id);
-      drawBubbleLabel(label, 0, 6, this.r);
+      const la = labelAlphaForRemaining(players.length, this.r);
+      if(la > 2) drawBubbleLabel(label, 0, 6, this.r, la);
 
       noStroke();
       fill(255,255,255,55);
