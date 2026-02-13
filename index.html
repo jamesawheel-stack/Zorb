@@ -66,6 +66,19 @@
     .btn.small{min-width:52px;padding:10px 10px}
     .btn.wide{min-width:110px}
     .btn.primary{border-color:rgba(120,255,170,0.35);background:rgba(120,255,170,0.12)}
+
+    /* Make <select class="btn"> readable (Chrome defaults to white background) */
+    select.btn{
+      background:var(--btn);
+      color:var(--text);
+      border:1px solid rgba(255,255,255,0.18);
+      -webkit-appearance:none;
+      appearance:none;
+    }
+    select.btn option{
+      background:var(--bg);
+      color:var(--text);
+    }
     .hidden{display:none!important}
 
     #toast{
@@ -163,7 +176,7 @@
     swirlJukeForce:1.55,
 
     robotScale:0.15,
-    robotY:0.12,
+    robotY:0.16,
     robotHoverAmpY:8,
     robotHoverSpeedY:0.028,
     robotSwayFracX:0.08,
@@ -194,6 +207,22 @@ multiElimChance:0.08,
 
     countdownSec:3,
   };
+
+  // Performance scaling (keeps big rounds smooth)
+  const PERF = {
+    // Max number of fully-simulated bubbles (pairwise separation is O(n^2))
+    maxSimBubbles: 160,
+
+    // When there are tons of "extra dots", update only a slice each frame
+    dotUpdateStride: 2,        // 2 = update half of dots per frame
+    dotDrawFastThreshold: 800, // above this, render dots using a fast fillRect path
+
+    // Only show usernames once we’re near the end
+    showNamesAtOrBelow: 100,
+  };
+
+  function totalRemaining(){ return players.length + extraDots.length; }
+
   // ---------- Arena scaling (auto) ----------
   let ARENA_START_COUNT = 0;       // set when we build the roster
   let final5Triggered = false;
@@ -652,7 +681,7 @@ function beginCountdown(){
 
   function resetSim(keepSetupState){
     players=[]; projectiles=[]; particles=[]; frameShake=0;
-    paused=false; winnerPlayed=false;
+    extraDots=[]; paused=false; winnerPlayed=false;
 
     confetti = [];
     confettiActive = false;
@@ -669,40 +698,39 @@ function beginCountdown(){
     countdownFrames = 0;
 
     const count = max(2, CFG.playerCount);
-    initialPlayerCount = count;
 
-    // Build extra dots (visual-only) if we had more entrants than we can render as full bubbles.
-    // These fade away as the real bubbles get eliminated so the transition feels seamless.
-    extraDots = [];
-    const claimed = Number(ROUND_META?.claimed_total || 0);
-    const extra = Math.max(0, claimed - count);
-    if(extra > 0){
-      const capDots = Math.min(650, extra); // perf cap
-      for(let i=0;i<capDots;i++){
-        extraDots.push({
-          x: random(10, width-10),
-          y: random(height*0.30, height-10),
-          r: random(1.2, 2.6),
-          a: random(40, 110)
-        });
-      }
+    // Cap the expensive bubble simulation; represent the rest as lightweight "dots"
+    const simCount = min(count, PERF.maxSimBubbles);
+    const dotCount = max(0, count - simCount);
+
+    const topBound = height*0.30;
+    const minY = height*0.32;
+    const maxY = height - 22;
+    const marginX = 18;
+
+    // Light dots: no separation, no labels; just drift + bounce
+    const dotR = (count > 2000) ? 2.0 : (count > 1000) ? 2.4 : (count > 400) ? 2.8 : 3.2;
+    for(let i=0;i<dotCount;i++){
+      const x = random(marginX, width-marginX);
+      const y = random(minY, maxY);
+      extraDots.push({
+        x,y,r:dotR,
+        vx: random(-0.9,0.9),
+        vy: random(-0.9,0.9),
+        tw: random(TAU),
+        a: 120 + random(60),
+      });
     }
-    const ids = Array.from({length:count}, (_,i)=>i+1);
 
-    const topBound = height*0.30 + ARENA_PAD;
-    const minY = height*0.32 + ARENA_PAD;
-    const maxY = height - ARENA_PAD;
-    const marginX = ARENA_PAD;
-
-    for(let i=0;i<count;i++){
-      const size = getDynamicBubbleSize(count);
-      const rSeed = random();
-      const r = lerp(size.min, size.max, rSeed);
+    // Full bubbles: these get the fancy rendering and separation physics
+    for(let i=0;i<simCount;i++){
+      const size = getDynamicBubbleSize(simCount);
+      const r = random(size.min, size.max);
 
       let x = width*0.5, y=(topBound+height)*0.5;
       let ok=false;
 
-      for(let attempt=0; attempt<240; attempt++){
+      for(let attempt=0; attempt<220; attempt++){
         x = random(r+marginX, width-r-marginX);
         y = random(minY+r, maxY-r);
         ok=true;
@@ -713,8 +741,8 @@ function beginCountdown(){
         if(ok) break;
       }
 
-      const handle = rosterHandles[i] || ("#" + ids[i]);
-      players.push(new Bubble(ids[i], handle, x, y, r, rSeed));
+      const handle = rosterHandles[i] || ("#" + (i+1));
+      players.push(new Bubble(i+1, handle, x, y, r));
     }
 
     updatePanelStatusThrottled(true);
@@ -738,6 +766,38 @@ function beginCountdown(){
     zorb.recoil *= 0.86;
     for(const s of stars) s.tw += s.sp;
 
+    // Update lightweight extra dots (stride update keeps big counts smooth)
+    if(extraDots.length){
+      const topBound = height*0.28;
+      const minY = height*0.32;
+      const maxY = height - 22;
+      const marginX = 18;
+      const stride = max(1, PERF.dotUpdateStride|0);
+      const phase = frameCount % stride;
+
+      for(let i=phase;i<extraDots.length;i+=stride){
+        const d = extraDots[i];
+        d.tw += 0.012;
+        // gentle swirl toward center (cheap)
+        const cx=width*0.5, cy=height*0.60;
+        const dx=cx-d.x, dy=cy-d.y;
+        const inv = 1.0 / (Math.sqrt(dx*dx+dy*dy) + 80);
+        d.vx += (-dy)*inv*0.22;
+        d.vy += ( dx)*inv*0.22;
+
+        d.x += d.vx;
+        d.y += d.vy;
+
+        if(d.x < marginX){ d.x=marginX; d.vx*=-1; }
+        if(d.x > width-marginX){ d.x=width-marginX; d.vx*=-1; }
+        if(d.y < minY){ d.y=minY; d.vy*=-1; }
+        if(d.y > maxY){ d.y=maxY; d.vy*=-1; }
+
+        d.vx *= 0.985;
+        d.vy *= 0.985;
+      }
+    }
+
     for(const b of players) b.update();
     for(let i=0;i<players.length;i++){
       for(let j=i+1;j<players.length;j++) players[i].separate(players[j]);
@@ -750,18 +810,7 @@ function beginCountdown(){
     for(let i=particles.length-1;i>=0;i--){
       particles[i].update();
       if(particles[i].dead) particles.splice(i,1);
-    
-    // FINAL 5 announcement (once)
-    if(!final5Triggered && simState==="running" && players.length===5){
-      final5Triggered = true;
-      final5Frames = 180;
-      playOne(sfxWoosh, SFX.woosh);
-      playOne(sfxBass, SFX.bass);
-      frameShake = max(frameShake, 6);
     }
-
-    stepFinal5Overlay();
-}
 
     if(confettiActive){
       for(let i=confetti.length-1;i>=0;i--){
@@ -773,7 +822,14 @@ function beginCountdown(){
       }
     }
 
-    tensionTarget = (players.length<=5 && simState==="running") ? 1 : 0;
+    // Final-5 overlay timer
+    if(final5Active && frameCount > final5UntilFrame){
+      final5Active = false;
+    }
+
+    const remaining = totalRemaining();
+
+    tensionTarget = (remaining<=5 && simState==="running") ? 1 : 0;
     tensionVol = lerp(tensionVol, tensionTarget, 0.02);
     if(audioUnlocked && sfxTension) sfxTension.setVolume(SFX.master*SFX.tensionMax*tensionVol);
 
@@ -784,29 +840,28 @@ function beginCountdown(){
     }
     if(simState!=="running") return;
 
+    // Trigger the FINAL 5 alert once (based on TOTAL remaining, including dots)
+    if(!final5Triggered && remaining === 5){
+      triggerFinal5Overlay();
+      final5Triggered = true;
+    }
+
+    // Arena-scaled firing pace: faster at big player pools, slower in finals
     zorb.fireCooldown -= deltaTime/1000;
-    if(zorb.fireCooldown<=0 && players.length>1){
-      // Pace scales with a bigger roster so the video gets to the finals faster.
-      const baseMult = constrain(map(initialPlayerCount, 50, 100, 1.0, 1.9), 1.0, 2.2);
-      const remainingMult = constrain(map(players.length, initialPlayerCount, 20, 1.0, 0.72), 0.72, 1.0);
+    if(zorb.fireCooldown<=0 && remaining>1){
+      const rate = arenaFireRate(remaining);
 
-      let rate = CFG.fireRate * baseMult * remainingMult;
-
-      if(players.length<=5) rate = CFG.fireRateFinal;   // slow down for finals
-      if(players.length<=2) rate = CFG.fireRateFinal2;  // even slower for last 2
-
-      if(players.length<=5 && frameCount % CFG.slowMoFrames < 10){
+      if(remaining<=5 && frameCount % CFG.slowMoFrames < 10){
+        // micro slow-mo pulses in finals
       }else{
         if(zorb.charge<=0){
-          // Slightly shorter “charge” early when the roster is huge
-          const chargeMult = constrain(map(initialPlayerCount, 50, 100, 1.0, 0.70), 0.65, 1.0);
-          zorb.charge = Math.max(5, Math.round(CFG.chargeTime * chargeMult));
+          zorb.charge = CFG.chargeTime;
 
           const t = pickTarget();
           zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
           zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
 
-          if(random() < CFG.nearMissChance*arenaChaos()){
+          if(random() < CFG.nearMissChance*arenaChaos(remaining)){
             zorb.aimX += random([-1,1])*random(40,80);
             zorb.aimY += random(20,60);
             playOne(sfxWoosh, SFX.woosh);
@@ -816,21 +871,42 @@ function beginCountdown(){
         zorb.charge -= 1;
         if(zorb.charge<=0){
           fireShot();
-          zorb.fireCooldown = 1/(rate);
+
+          // If we still have extra dots, remove a small batch immediately (cheap)
+          if(extraDots.length){
+            const batch = (remaining>2000) ? 8 : (remaining>1000) ? 6 : (remaining>400) ? 3 : 1;
+            eliminateExtraDots(batch);
+          }
+
+          zorb.fireCooldown = 1/(rate*arenaChaos(remaining));
         }
       }
     }
 
+    // If dots remain, we treat them as "already in the arena" but we always finish on a real bubble
+    if(extraDots.length){
+      // Keep at least 1 bubble alive so we can show a proper winner card
+      if(players.length===0){
+        // Promote one dot into a bubble if needed
+        const d = extraDots.pop();
+        if(d){
+          players.push(new Bubble(1, rosterHandles[0] || "#1", d.x, d.y, 44));
+        }
+      }
+      return;
+    }
+
+    // Winner logic (bubbles only at this point)
     if(players.length===1){
       simState="finished";
       if(!winnerPlayed){
         playOne(sfxWinner, SFX.winner);
-        // bring back the music as an outro bed after the winner sting
-        setTimeout(()=>{ if(simState==='finished') setMusicOn(true); }, 2200);
-
         winnerPlayed=true;
 
         spawnConfetti();
+
+        // Bring the background music back after the winner sting
+        setTimeout(()=>{ try{ setMusicOn(true); }catch(_){} }, 900);
 
         (async () => {
           try {
@@ -846,6 +922,25 @@ function beginCountdown(){
   }
 
   function pickTarget(){
+    // Prefer dots while there are many, so the big rounds burn down quickly
+    const rem = totalRemaining();
+    const preferDots = extraDots.length && rem > PERF.maxSimBubbles;
+
+    if(preferDots && random() < 0.75){
+      // sample a few random dots and pick the “best”
+      const samples = min(12, extraDots.length);
+      let best = extraDots[int(random(extraDots.length))];
+      let bestScore = -1e9;
+      for(let k=0;k<samples;k++){
+        const d = extraDots[int(random(extraDots.length))];
+        const centerBias = -dist(d.x,d.y, width*0.5, height*0.62);
+        const score = centerBias + random(-60,60);
+        if(score>bestScore){ bestScore=score; best=d; }
+      }
+      return best;
+    }
+
+    // Otherwise, pick among bubbles
     const avoidWinner = BACKEND_WINNER && players.length>2;
     const pool = avoidWinner ? players.filter(b=>b.handle !== BACKEND_WINNER) : players;
     if(pool.length===0) return random(players);
@@ -952,12 +1047,28 @@ function beginCountdown(){
   function drawExtraDots(){
     if(!extraDots || extraDots.length===0) return;
 
-    // Fade out the extra-dot layer as we approach the finals so it feels like the crowd thins.
-    const fade = constrain(map(players.length, 100, 20, 1, 0), 0, 1);
+    // Fade out the dot cloud as we approach finals so the transition feels seamless
+    const rem = totalRemaining();
+    const fade = constrain(map(rem, 400, PERF.maxSimBubbles, 1, 0), 0, 1);
+
+    const ctx = drawingContext;
+
+    // For very large dot counts, use a fast fillRect path (much cheaper than thousands of circles)
+    if(extraDots.length >= PERF.dotDrawFastThreshold){
+      ctx.save();
+      ctx.globalAlpha = 0.55 * fade;
+      ctx.fillStyle = "rgba(180,200,255,1)";
+      const r = extraDots[0].r || 2;
+      for(const d of extraDots){
+        ctx.fillRect(d.x, d.y, r, r);
+      }
+      ctx.restore();
+      return;
+    }
 
     noStroke();
     for(const d of extraDots){
-      fill(180,200,255, d.a * 0.6 * fade);
+      fill(180,200,255, (d.a||160) * 0.6 * fade);
       circle(d.x, d.y, d.r);
     }
   }
@@ -1624,6 +1735,31 @@ function drawBubbleLabel(label, x, y, r, alpha){
     }
   }
 
+  function eliminateExtraDots(batch){
+    if(!extraDots.length) return;
+    const n = min(batch, extraDots.length);
+    for(let k=0;k<n;k++){
+      const idx = int(random(extraDots.length));
+      const d = extraDots[idx];
+      // swap-remove
+      extraDots[idx] = extraDots[extraDots.length-1];
+      extraDots.pop();
+
+      // lightweight pop feedback (no heavy particle spam at huge counts)
+      if(d){
+        playRandPop();
+        if(totalRemaining() <= 600){
+          // only add particles when manageable
+          for(let i=0;i<6;i++){
+            const v=p5.Vector.random2D().mult(random(1.5,5.0));
+            particles.push(new Particle(d.x,d.y,v.x,v.y,14,'spark'));
+          }
+        }
+      }
+    }
+  }
+
+
   async function reportWinnerToBackend(b) {
     const payload = { winner: b.handle || ("#" + b.id), winnerSlot: b.id };
 
@@ -1691,7 +1827,7 @@ function drawBubbleLabel(label, x, y, r, alpha){
 
     hudStatusEl.textContent =
       `State: ${state}${rd}${mode}${backend} • Zorb: ${z} • Audio: ${a}` +
-      ` • Players: ${CFG.playerCount} • Remaining: ${players.length}${cd}` +
+      ` • Players: ${CFG.playerCount} • Remaining: ${totalRemaining()}${cd}` +
       (paused ? " • PAUSED" : "");
   }
 
