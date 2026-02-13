@@ -433,7 +433,7 @@
     
   function beginCountdown(){
     unlockAudioOnce();
-    setMusicOn(true);
+    setMusicOn(false);
     requestWakeLock();
 
     showPanel(false);
@@ -671,7 +671,6 @@
       simState="finished";
       if(!winnerPlayed){
         playOne(sfxWinner, SFX.winner);
-        setMusicOn(false);
         winnerPlayed=true;
 
         spawnConfetti();
