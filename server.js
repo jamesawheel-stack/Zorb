@@ -35,7 +35,7 @@ const ROUND_MODE_LIVE = (process.env.ROUND_MODE_LIVE || "live").trim();
 
 // ---------------- SUPABASE ----------------
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.warn("⚠️ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  console.warn("â ï¸ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 }
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false },
@@ -147,7 +147,7 @@ function buildTrainingPlayers(count) {
   }));
 }
 
-function buildLivePlayersFromComments(comments, cap) {
+function buildLivePlayersFromComments(comments, pickCap) {
   const seen = new Set();
   const uniq = [];
 
@@ -169,8 +169,10 @@ function buildLivePlayersFromComments(comments, cap) {
     });
   }
 
-  const picked = shuffle(uniq).slice(0, cap);
-  return picked.map((p, i) => ({
+  const claimed_total = uniq.length;
+  const picked = shuffle(uniq).slice(0, pickCap);
+
+  const players = picked.map((p, i) => ({
     slot: i + 1,
     handle: p.handle,
     img: null,
@@ -179,7 +181,10 @@ function buildLivePlayersFromComments(comments, cap) {
     comment_text: p.comment_text,
     comment_ts: p.comment_ts,
   }));
+
+  return { claimed_total, players };
 }
+
 
 // ---------------- DB HELPERS ----------------
 async function upsertRound(row) {
@@ -220,9 +225,10 @@ async function generateRound({ requestedMaxPlayers } = {}) {
         post = latest;
 
         const comments = await getComments(latest.id);
-        const livePlayers = buildLivePlayersFromComments(comments, PLAYER_COUNT_MAX);
+        const live = buildLivePlayersFromComments(comments, PLAYER_COUNT_MAX);
 
-        claimed_total = livePlayers.length;
+        claimed_total = live.claimed_total;
+        const livePlayers = live.players;
 
         if (claimed_total >= MIN_PLAYERS) {
           mode = ROUND_MODE_LIVE; // <-- enum-safe via env
@@ -291,7 +297,7 @@ app.get("/admin", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
     <h2>Zorbi Admin</h2>
-    <p>Generate today’s round (live if possible, else training).</p>
+    <p>Generate todayâs round (live if possible, else training).</p>
     <p>Optional test size: <code>/admin/generate?max=72</code></p>
     <input id="key" placeholder="Admin Key" style="width:340px;padding:6px;" />
     <button onclick="gen()" style="padding:6px 10px;">Generate</button>
