@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <link rel="icon" type="image/png" href="zorb.png">
+  <link rel="icon" type="image/png" href="Zorb2.PNG">
   <title>Zorbi – Mobile Full v6.5</title>
   <style>
     :root{
@@ -18,46 +18,11 @@
       --warn:rgba(255,210,120,0.92);
       --bad:rgba(255,120,120,0.92);
     }
-    html,body{margin:0;padding:0;background:#000 url('background.png') center/cover no-repeat fixed;overflow:hidden;height:100%}
+    html,body{margin:0;padding:0;background:var(--bg);overflow:hidden;height:100%}
     canvas{display:block;margin:0 auto;touch-action:none}
 
-    /* Visual overlay frame for filming (does not intercept touches) */
-    #uiFrame{
-      position:fixed;inset:0;z-index:12;
-      width:100vw;height:100vh;object-fit:cover;
-      pointer-events:none;user-select:none;
-      image-rendering:auto;
-    }
-    /* Winner screen overlay (arcade cabinet) */
-    #winnerOverlay{
-      position:fixed;inset:0;z-index:60;
-      display:none;align-items:center;justify-content:center;
-      pointer-events:none;
-    }
-    #winnerOverlay img{
-      width:100vw;height:100vh;object-fit:cover;
-    }
-    #winnerName{
-      position:absolute;
-      /* box roughly centered in the empty name area of winnerframe.png */
-      left:50%;top:44%;
-      transform:translate(-50%,-50%);
-      width:min(86vw,720px);
-      text-align:center;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      font-weight:900;
-      font-size:clamp(28px,6vw,64px);
-      letter-spacing:0.5px;
-      color:#fff;
-      text-shadow:0 6px 22px rgba(0,0,0,0.85), 0 0 18px rgba(255,150,40,0.45);
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      padding:0 24px;
-    }
-
     #hud{
-      position:fixed;left:12px;top:12px;z-index:20;
+      position:fixed;left:12px;top:12px;z-index:10;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       color:var(--text);font-size:12px;line-height:1.25;
       background:var(--panel);border:1px solid var(--stroke);
@@ -144,15 +109,34 @@
     select:focus{border-color:rgba(160,80,255,0.65); box-shadow:0 0 0 2px rgba(160,80,255,0.25)}
     option{background:#0B0F1F;color:#fff;}
 
-  </style>
+  
+
+/* --- Stage sizing (keeps 9:16 on desktop) --- */
+html, body { height:100%; margin:0; }
+body { background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+#gameWrap { position:relative; width:min(100vw, calc(100vh * 9 / 16)); height:calc(min(100vw, calc(100vh * 9 / 16)) * 16 / 9); }
+#game { position:relative; width:100%; height:100%; }
+#game canvas { position:absolute !important; inset:0; width:100% !important; height:100% !important; z-index:5; }
+#game img.overlay { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; pointer-events:none; z-index:20; }
+
+
+button, .hud button, .hud-btn {
+  color:#fff !important;
+  background:rgba(0,0,0,0.45) !important;
+  border:1px solid rgba(255,255,255,0.25) !important;
+  backdrop-filter: blur(6px);
+}
+button:hover { background:rgba(0,0,0,0.6) !important; }
+</style>
 </head>
 <body>
-  <img id="uiFrame" src="ui_frame.png" alt="" />
-  <div id="winnerOverlay" aria-hidden="true">
-    <img src="winnerframe.png" alt="" />
-    <div id="winnerName"></div>
-  </div>
-  <div id="toast">UI shown</div>
+<div id="gameWrap"><div id="game">
+
+  
+  <img id="bg" class="overlay" src="background.png" alt="">
+  <img id="uiFrame" class="overlay" src="ui_frame.png" alt="">
+  <img id="winnerFrame" class="overlay" src="winnerframe.png" alt="" style="display:none;">
+<div id="toast">UI shown</div>
 
   <div id="hud">
     <b>Zorbi – Today’s Round</b>
@@ -197,7 +181,9 @@
     <button class="btn wide" id="btnHide" type="button">Hide UI</button>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/addons/p5.sound.min.js"></script>
 
   <script>
@@ -367,6 +353,7 @@ multiElimChance:0.08,
   let zorbImg, zorbLoaded=false;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
+  let cnv;
   let paused=false, frameShake=0;
   let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0, aimMeta:null };
 
@@ -677,20 +664,6 @@ multiElimChance:0.08,
 
   function enableStart(on){ startBtnEl.disabled = !on; }
   function showPanel(show){ panelEl.classList.toggle('hidden', !show); }
-
-  function showWinnerOverlay(name){
-    const ov = document.getElementById('winnerOverlay');
-    const nm = document.getElementById('winnerName');
-    if(!ov || !nm) return;
-    nm.textContent = name || '';
-    ov.style.display = 'flex';
-  }
-  function hideWinnerOverlay(){
-    const ov = document.getElementById('winnerOverlay');
-    if(!ov) return;
-    ov.style.display = 'none';
-  }
-
   function togglePause(){ if(simState !== "setup") paused = !paused; }
 
   function setMusicOn(on){
@@ -826,8 +799,6 @@ function beginCountdown(){
   }
 
   function resetSim(keepSetupState){
-    hideWinnerOverlay();
-
     players=[]; projectiles=[]; particles=[]; frameShake=0;
     extraDots=[]; paused=false; winnerPlayed=false;
 
@@ -1059,8 +1030,8 @@ function beginCountdown(){
       if(!winnerPlayed){
         playOne(sfxWinner, SFX.winner);
         winnerPlayed=true;
-        showWinnerOverlay((players[0]&&players[0].handle)||'');
 
+        
         resumeMusicAfterEnd();
 spawnConfetti();
 
@@ -1326,9 +1297,9 @@ function drawExtraDots(){
     textAlign(RIGHT, CENTER);
     textSize(14);
     fill(255,255,255,210);
-    text("HIGH SCORE", width-pad, barH*0.48);
+    text("ROUND", width-pad, barH*0.48);
 
-    const hs = 1000000;
+    const hs = ;
     textSize(18);
     drawingContext.save();
     drawingContext.shadowBlur = 14;
