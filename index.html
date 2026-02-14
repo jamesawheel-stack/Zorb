@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link rel="icon" type="image/png" href="zorb.png">
-  <title>Zorbi – Mobile Full v2</title>
+  <title>Zorbi – Mobile Full v6.5</title>
   <style>
     :root{
       --bg:#0B0F1F;
@@ -45,26 +45,37 @@
     #panel .row{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:10px}
     #panel .note{font-size:11px;opacity:.75;margin-top:10px}
     #panel .status{margin-top:10px;font-size:12px;opacity:.95}
-    #panel .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.08)}
+    #panel .pill{
+      background:rgba(0,0,0,0.55);
+      border:1px solid rgba(255,255,255,0.14);
+      padding:8px 12px;
+      border-radius:999px;
+      font-weight:800;
+      color:rgba(255,255,255,0.92);
+      text-shadow:0 2px 10px rgba(0,0,0,0.6);
+    }
     #panel .ok{color:var(--good)} #panel .warn{color:var(--warn)} #panel .bad{color:var(--bad)}
 
     #controls{
-      position:fixed;left:50%;bottom:14px;transform:translateX(-50%);
-      z-index:25;display:flex;gap:10px;padding:10px;border-radius:18px;
-      background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.18);
-      backdrop-filter:blur(14px);
-      user-select:none;-webkit-user-select:none;touch-action:manipulation;
+      position:absolute;left:12px;right:12px;bottom:12px;
+      padding:12px; border-radius:18px;
+      background:rgba(0,0,0,0.42);
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow:0 0 0 1px rgba(255,0,255,0.10), 0 18px 40px rgba(0,0,0,0.45);
+      backdrop-filter: blur(6px);
     }
     .btn{
-      appearance:none;border:1px solid rgba(255,255,255,0.18);
-      background:rgba(0,0,0,0.55);color:#fff;
-      padding:10px 12px;border-radius:14px;font-size:13px;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      cursor:pointer;min-width:64px;
-      text-shadow:0 2px 10px rgba(0,0,0,0.9);
+      background:rgba(0,0,0,0.55);
+      color:rgba(255,255,255,0.92);
+      border:1px solid rgba(255,255,255,0.18);
+      border-radius:14px;
+      padding:12px 16px;
+      font-weight:800;
+      letter-spacing:.2px;
+      box-shadow:0 0 0 1px rgba(255,0,255,0.15), 0 8px 24px rgba(0,0,0,0.35);
+      text-shadow:0 2px 10px rgba(0,0,0,0.6);
     }
-    .btn:hover{background:rgba(0,0,0,0.70)}
-    .btn:active{transform:translateY(1px);background:rgba(0,0,0,0.78)}
+    .btn:active{transform:translateY(1px);background:var(--btnHover)}
     .btn.small{min-width:52px;padding:10px 10px}
     .btn.wide{min-width:110px}
     .btn.primary{border-color:rgba(120,255,170,0.35);background:rgba(120,255,170,0.12)}
@@ -110,33 +121,21 @@
     option{background:#0B0F1F;color:#fff;}
 
   
-
-/* --- Stage sizing (keeps 9:16 on desktop) --- */
-html, body { height:100%; margin:0; }
-body { background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
-#gameWrap { position:relative; width:min(100vw, calc(100vh * 9 / 16)); height:calc(min(100vw, calc(100vh * 9 / 16)) * 16 / 9); }
-#game { position:relative; width:100%; height:100%; }
-#game canvas { position:absolute !important; inset:0; width:100% !important; height:100% !important; z-index:5; }
-#game img.overlay { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; pointer-events:none; z-index:20; }
-
-
-button, .hud button, .hud-btn {
-  color:#fff !important;
-  background:rgba(0,0,0,0.45) !important;
-  border:1px solid rgba(255,255,255,0.25) !important;
+/* Improve HUD contrast on dark/star backgrounds */
+#hud, #hud * { color: rgba(255,255,255,0.92); }
+#hud button, #hud .chip, #hud input, #hud select {
+  background: rgba(10, 10, 20, 0.70);
+  border: 1px solid rgba(255,255,255,0.22);
+  color: rgba(255,255,255,0.95);
+  box-shadow: 0 0 12px rgba(180, 80, 255, 0.18);
   backdrop-filter: blur(6px);
 }
-button:hover { background:rgba(0,0,0,0.6) !important; }
+#hud button:hover { background: rgba(20,20,40,0.75); }
+#hud button:active { transform: translateY(1px); }
 </style>
 </head>
 <body>
-<div id="gameWrap"><div id="game">
-
-  
-  <img id="bg" class="overlay" src="background.png" alt="">
-  <img id="uiFrame" class="overlay" src="ui_frame.png" alt="">
-  <img id="winnerFrame" class="overlay" src="winnerframe.png" alt="" style="display:none;">
-<div id="toast">UI shown</div>
+  <div id="toast">UI shown</div>
 
   <div id="hud">
     <b>Zorbi – Today’s Round</b>
@@ -181,12 +180,10 @@ button:hover { background:rgba(0,0,0,0.6) !important; }
     <button class="btn wide" id="btnHide" type="button">Hide UI</button>
   </div>
 
-  
-</div></div>
-<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/addons/p5.sound.min.js"></script>
 
-  <script>
+  <script type="module">
   const BACKEND_BASE =
     (location.hostname === "localhost" || location.hostname === "127.0.0.1")
       ? "http://localhost:10000"
@@ -208,6 +205,9 @@ button:hover { background:rgba(0,0,0,0.6) !important; }
     baseHeight:1920,
     bgColor:'#0B0F1F',
     vignette:true,
+
+    // Displayed in top HUD (set from backend round meta when available)
+    roundNumber: 2,
 
     playerCount:50,
 
@@ -351,9 +351,12 @@ multiElimChance:0.08,
   };
     
   let zorbImg, zorbLoaded=false;
+  // Optional UI image overlays (add these files to the repo root)
+  // - background.png : slim 9:16 UI frame overlay (transparent center recommended)
+  // - winnerframe.png: winner screen frame with an empty/black name box
+  let uiFrameImg=null, winnerFrameImg=null;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
-  let cnv;
   let paused=false, frameShake=0;
   let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0, aimMeta:null };
 
@@ -440,12 +443,15 @@ multiElimChance:0.08,
 
       ROUND_META = {
         round_date: new Date().toISOString().slice(0,10),
+        round_number: 2,
         mode: "offline",
         claimed_total: null,
         finale_count: finalCount,
         status: "offline",
         seed: null,
       };
+
+      CFG.roundNumber = ROUND_META.round_number;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent = "Load roster (OFFLINE TEST)";
@@ -475,12 +481,15 @@ multiElimChance:0.08,
       BACKEND_WINNER = round?.winner || null;
       ROUND_META = {
         round_date: round?.round_date || null,
+        round_number: Number(round?.round_number || round?.round || 2) || 2,
         mode: round?.mode || null,
         claimed_total: round?.claimed_total ?? null,
         finale_count: round?.finale_count ?? finalCount,
         status: round?.status || null,
         seed: round?.seed ?? null,
       };
+
+      CFG.roundNumber = ROUND_META.round_number;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent =
@@ -501,33 +510,35 @@ multiElimChance:0.08,
   }
 
   function preload(){
-    zorbImg = loadImage('zorb.png',
+    // Core sprite + overlays (files should exist in repo root)
+    //   zorb.png
+    //   background.png
+    //   ui_frame.png  (transparent PNG overlay)
+    //   winnerframe.png (winner overlay; transparent PNG)
+    zorbImg = loadImage('zorb.png?v=4',
       ()=>{ zorbLoaded=true; },
-      ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
+      ()=>{ zorbLoaded=false; console.warn("zorb.png failed to load"); }
     );
-    sfxPop = [ loadSound('pop1.mp3'), loadSound('pop2.mp3'), loadSound('pop3.mp3'), loadSound('pop4.mp3') ];
-    sfxWinner  = loadSound('winner.mp3');
-    sfxReload  = loadSound('reload.mp3');
-    sfxFire    = loadSound('fire.mp3');
-    sfxBass    = loadSound('bass.wav');
-    sfxWoosh   = loadSound('woosh.wav');
-    sfxTension = loadSound('tension.wav');
-    sfxMusic = loadSound('music_loop.mp3');
-  }
 
-  function setup(){
+    bgImg = loadImage('background.png',
+      ()=>{},
+      ()=>{ console.warn("Missing background.png"); }
+    );
+
+    uiFrameImg = loadImage('ui_frame.png',
+      ()=>{},
+      ()=>{ console.warn("Missing ui_frame.png"); }
+    );
+
+    winnerFrameImg = loadImage('winnerframe.png',
+      ()=>{},
+      ()=>{ console.warn("Missing winnerframe.png"); }
+    );
+  }
+async async function setup(){
     createOrResizeCanvas();
     hookUI();
-    // p5 won't await an async setup(); run async boot separately.
-    boot();
-  }
-
-  async function boot(){
-    try{
-      await loadTodayRound();
-    }catch(e){
-      console.warn('loadTodayRound failed (continuing offline)', e);
-    }
+    await loadTodayRound();
     resetSim(true);
     updatePanelStatusThrottled(true);
     updateHudThrottled(true);
@@ -1151,7 +1162,18 @@ spawnConfetti();
 
     if(confettiActive) drawConfetti();
 
+    // UI frame overlay (above gameplay, below scanlines)
+    drawUIFrameOverlay();
     drawScanlines();
+    pop();
+  }
+
+  function drawUIFrameOverlay(){
+    if(!uiFrameImg) return;
+    push();
+    imageMode(CORNER);
+    // If your frame has an opaque center, export a version with a transparent center.
+    image(uiFrameImg, -width*0.02, -height*0.02, width*1.04, height*1.04);
     pop();
   }
 
@@ -1238,76 +1260,43 @@ function drawExtraDots(){
 
   
   function drawArcadeHUD(){
-    // In-canvas HUD so it shows even when DOM UI is hidden (more “game-like”)
-    const pad = 14;
-    const barH = 58;
-    const HUD_INSET_X = 26;
-    const HUD_Y = 24;
+  // Minimal top HUD: Players (left) + Round (right). Center intentionally blank.
+  const padX = 28;
+  const y = 22;
+  const h = 54;
+  const w = width - padX*2;
 
-    // glassy plate
-    drawingContext.save();
-    const grd = drawingContext.createLinearGradient(0, 0, width, 0);
-    grd.addColorStop(0, "rgba(0,0,0,0.55)");
-    grd.addColorStop(0.5, "rgba(20,10,40,0.45)");
-    grd.addColorStop(1, "rgba(0,0,0,0.55)");
-    drawingContext.fillStyle = grd;
-    noStroke();
-    rect(0, 0, width, barH);
-    drawingContext.restore();
+  // background pill
+  noStroke();
+  fill(0,0,0,110);
+  rect(padX, y, w, h, 18);
 
-    // thin neon line
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(255,0,200,0.55)";
-    stroke(255,0,200,120);
-    strokeWeight(3);
-    line(10, barH-2, width-10, barH-2);
-    drawingContext.restore();
+  // subtle neon underline
+  stroke(255,0,200,140);
+  strokeWeight(2);
+  line(padX+18, y+h-2, padX+w-18, y+h-2);
+  noStroke();
 
-    // Labels
-    const remaining = players?.length ?? 0;
-    const total = CFG.playerCount ?? 0;
+  // values
+  const total = (typeof ARENA_START_COUNT === 'number' && ARENA_START_COUNT>0) ? ARENA_START_COUNT : (ROUND_META?.playerCount || 0);
+  const remaining = (typeof totalRemaining === 'function') ? totalRemaining() : 0;
+  const roundNo = (ROUND_META && ROUND_META.roundNumber) ? ROUND_META.roundNumber : 1;
 
-    textAlign(LEFT, CENTER);
-    textSize(14);
-    noStroke();
-    fill(255,255,255,210);
-    text("PLAYERS", pad, barH*0.48);
+  textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
+  textSize(18);
+  fill(255,255,255,230);
 
-    textSize(18);
-    drawingContext.save();
-    drawingContext.shadowBlur = 14;
-    drawingContext.shadowColor = "rgba(120,220,255,0.70)";
-    fill(120,220,255,240);
-    text(`${remaining}/${total}`, pad, barH*0.80);
-    drawingContext.restore();
+  // LEFT: players
+  textAlign(LEFT, CENTER);
+  const leftText = `PLAYERS ${remaining}/${total || remaining}`;
+  text(leftText, padX+18, y + h/2);
 
-    // Center title / mode
-    const mode = (ROUND_META?.mode || (USE_BACKEND ? "live" : "offline")).toUpperCase();
-    textAlign(CENTER, CENTER);
-    textSize(14);
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(160,80,255,0.65)";
-    fill(255,255,255,210);
-    text(`ZORBI • ${mode}`, width*0.5, barH*0.52);
-    drawingContext.restore();
+  // RIGHT: round
+  textAlign(RIGHT, CENTER);
+  const rightText = `ROUND ${roundNo}`;
+  text(rightText, padX + w - 18, y + h/2);
+}
 
-    // Faux hi-score on right (you can wire this later)
-    textAlign(RIGHT, CENTER);
-    textSize(14);
-    fill(255,255,255,210);
-    text("ROUND", width-pad, barH*0.48);
-
-    const hs = ;
-    textSize(18);
-    drawingContext.save();
-    drawingContext.shadowBlur = 14;
-    drawingContext.shadowColor = "rgba(255,0,200,0.70)";
-    fill(255,0,200,235);
-    text(String(hs), width-pad, barH*0.80);
-    drawingContext.restore();
-  }
 
   function drawScanlines(){
     // subtle CRT scanlines + vignette noise (kept light so it doesn't look “cheap”)
@@ -1484,7 +1473,18 @@ function drawFinal5Overlay(){
     const cx = width*0.5 + dx;
     const cy = height*0.40 + dy;
 
+    // Frame-following glow (replaces the old rounded-edge border that clipped banner text)
+    const pad = 18;
     const ctx = drawingContext;
+    ctx.save();
+    ctx.shadowBlur = 38 + pulse*18;
+    ctx.shadowColor = "rgba(255, 0, 200, 0.55)";
+    noFill();
+    stroke(255, 0, 200, 90);
+    strokeWeight(6);
+    rect(pad, pad, width-pad*2, height-pad*2, 22);
+    ctx.restore();
+
     ctx.save();
     ctx.shadowBlur = 44 + pulse*18;
     ctx.shadowColor = "rgba(255, 0, 200, 0.70)";
@@ -1506,128 +1506,55 @@ function drawFinal5Overlay(){
   }
 
   function drawWinner(b){
-    // Retro “arcade win screen” – clean neon, no cheap gradients
-    const cx = width*0.5, cy = height*0.52;
-    const pulse = sin(frameCount*0.06)*0.5+0.5;
+    // Winner screen should feel like a high-score splash.
+    background(6,4,12);
+    drawStarfield(true);
+    if(confettiActive) drawConfetti();
 
-    // Dim + subtle scan glow
-    noStroke();
-    fill(0,0,0,140);
-    rect(0,0,width,height);
+    // Winner frame art (recommended)
+    if(winnerFrameImg){
+      imageMode(CORNER);
+      image(winnerFrameImg, 0, 0, width, height);
+    }
 
-    // Center aura
-    const R = min(width,height)*0.22;
-    drawingContext.save();
-    drawingContext.shadowBlur = 48;
-    drawingContext.shadowColor = "rgba(160,80,255,0.55)";
-    fill(160, 80, 255, 34 + pulse*26);
-    circle(cx, cy, R*3.0 + pulse*26);
-    drawingContext.restore();
+    const winner = players.find(p=>p.id===winId);
+    const name = String(winner?.handle || winner?.id || "WINNER");
 
-    // Winner bubble ring
-    drawingContext.save();
-    drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(120,220,255,0.55)";
-    stroke(190,245,255,160);
-    strokeWeight(7);
-    fill(255,255,255,14);
-    circle(cx, cy, R*2.06);
-    drawingContext.restore();
+    // Center username inside the name box on winnerframe.png
+    const nameX = width * 0.50;
+    const nameY = height * 0.44;
+    const maxW  = width * 0.78;
 
-    // Inner shine
-    noStroke();
-    fill(255,255,255,46);
-    ellipse(cx - R*0.26, cy - R*0.30, R*1.05, R*0.70);
+    textAlign(CENTER, CENTER);
+    textSize(min(64, width*0.10));
 
-    // Handle
-    const label = (b.handle ? "@"+b.handle : ("#"+b.id));
-    let ts = R*0.52;
-    if(label.length > 10) ts = R*0.40;
-    if(label.length > 14) ts = R*0.33;
+    // Fit-to-width if name is long
+    let ts = textSize();
+    while(textWidth(name) > maxW && ts > 22){
+      ts -= 2;
+      textSize(ts);
+    }
 
-    textAlign(CENTER,CENTER);
-    textSize(ts);
-
-    // Crisp neon text (outline + glow)
     drawingContext.save();
     drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(255,0,200,0.75)";
+    drawingContext.shadowColor = "rgba(255,180,60,0.75)";
     stroke(0,0,0,220);
     strokeWeight(10);
-    fill(255,255,255,252);
-    text(label, cx, cy+6);
+    fill(255);
+    text(name, nameX, nameY);
     drawingContext.restore();
 
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(120,220,255,0.80)";
-    stroke(255,255,255,110);
-    strokeWeight(3);
-    fill(255,255,255,255);
-    text(label, cx, cy+6);
-    drawingContext.restore();
-
-    // MARQUEE banner – chunky, arcade-like
-    const by = height*0.16;
-    const bannerW = min(width*0.90, 560);
-    const bannerH = 78;
-
-    // outer frame
-    drawingContext.save();
-    drawingContext.shadowBlur = 34;
-    drawingContext.shadowColor = "rgba(255,0,200,0.55)";
-    noFill();
-    stroke(255,0,200, 160);
-    strokeWeight(10);
-    rectMode(CENTER);
-    rect(cx, by, bannerW, bannerH, 18);
-    drawingContext.restore();
-
-    // inner glow plate
-    const grd = drawingContext.createLinearGradient(cx-bannerW/2, by, cx+bannerW/2, by);
-    grd.addColorStop(0, "rgba(255,0,200,0.35)");
-    grd.addColorStop(0.5, "rgba(160,80,255,0.25)");
-    grd.addColorStop(1, "rgba(120,220,255,0.28)");
-    drawingContext.save();
-    drawingContext.fillStyle = grd;
-    noStroke();
-    rect(cx, by, bannerW-10, bannerH-10, 14);
-    drawingContext.restore();
-
-    // Text
-    textAlign(CENTER, CENTER);
-    textSize(44);
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 32;
-    drawingContext.shadowColor = "rgba(255,0,200,0.85)";
-    stroke(0,0,0,240);
-    strokeWeight(12);
-    fill(255,255,255,255);
-    text("WINNER!", cx, by+2);
-    drawingContext.restore();
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 20;
-    drawingContext.shadowColor = "rgba(120,220,255,0.85)";
-    stroke(255,255,255,120);
-    strokeWeight(3);
-    fill(255,255,255,255);
-    text("WINNER!", cx, by+2);
-    drawingContext.restore();
-
-    // CTA footer (small, clean)
+    // Small CTA
     textSize(18);
     drawingContext.save();
     drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(160,80,255,0.65)";
-    fill(230, 210, 255, 250);
-    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', cx, height*0.29);
+    drawingContext.shadowColor = "rgba(160,80,255,0.75)";
+    fill(230, 210, 255, 240);
+    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', width*0.5, height*0.68);
     drawingContext.restore();
-
-    rectMode(CORNER);
   }
-function drawBubbleLabel(label, x, y, r, alpha){
+
+  function drawBubbleLabel(label, x, y, r, alpha){
     label = String(label||"");
     let shown = label;
     if(shown.length>14) shown = shown.slice(0,13)+"…";
