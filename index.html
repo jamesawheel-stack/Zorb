@@ -124,7 +124,10 @@
 /* Improve HUD contrast on dark/star backgrounds */
 #hud, #hud * { color: rgba(255,255,255,0.92); }
 #hud button, #hud .chip, #hud input, #hud select {
-  background: rgba(10, 10, 20, 0.70);
+  border: 1px solid rgba(255,255,255,0.18);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+
+  background: rgba(0, 0, 0, 0.72);
   border: 1px solid rgba(255,255,255,0.22);
   color: rgba(255,255,255,0.95);
   box-shadow: 0 0 12px rgba(180, 80, 255, 0.18);
@@ -535,7 +538,7 @@ multiElimChance:0.08,
       ()=>{ console.warn("Missing winnerframe.png"); }
     );
   }
-async async function setup(){
+async function setup(){
     createOrResizeCanvas();
     hookUI();
     await loadTodayRound();
@@ -1127,7 +1130,27 @@ spawnConfetti();
     frameShake = max(frameShake, CFG.screenShakeShot*(players.length<=5?1.0:0.8));
   }
 
-  function render(){
+  
+function drawStarfield() {
+  // Prefer the static star background image (fast + consistent). Fallback to procedural stars.
+  if (bgImg && bgImg.width) {
+    image(bgImg, 0, 0, width, height);
+    return;
+  }
+  background(5, 5, 12);
+  noStroke();
+  // simple twinkle
+  for (let i = 0; i < stars.length; i++) {
+    const s = stars[i];
+    const tw = 0.5 + 0.5 * sin((frameCount * 0.03) + s.phase);
+    const a = 90 + 130 * tw;
+    fill(255, 255, 255, a);
+    circle(s.x * width, s.y * height, s.r);
+  }
+}
+
+
+function render(){
     let sx=0, sy=0;
     if(frameShake>0 && !paused){
       sx = random(-frameShake, frameShake);
@@ -1538,54 +1561,51 @@ function drawFinal5Overlay(){
     ctx.restore();
   }
 
-  function drawWinner(b){
-    // Winner screen should feel like a high-score splash.
-    background(6,4,12);
-    drawStarfield(true);
-    if(confettiActive) drawConfetti();
-
-    // Winner frame art (recommended)
-    if(winnerFrameImg){
-      imageMode(CORNER);
-      image(winnerFrameImg, 0, 0, width, height);
-    }
-
-    const winner = players.find(p=>p.id===winId);
-    const name = String(winner?.handle || winner?.id || "WINNER");
-
-    // Center username inside the name box on winnerframe.png
-    const nameX = width * 0.50;
-    const nameY = height * 0.44;
-    const maxW  = width * 0.78;
-
-    textAlign(CENTER, CENTER);
-    textSize(min(64, width*0.10));
-
-    // Fit-to-width if name is long
-    let ts = textSize();
-    while(textWidth(name) > maxW && ts > 22){
-      ts -= 2;
-      textSize(ts);
-    }
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(255,180,60,0.75)";
-    stroke(0,0,0,220);
-    strokeWeight(10);
-    fill(255);
-    text(name, nameX, nameY);
-    drawingContext.restore();
-
-    // Small CTA
-    textSize(18);
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(160,80,255,0.75)";
-    fill(230, 210, 255, 240);
-    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', width*0.5, height*0.68);
-    drawingContext.restore();
+  
+function drawWinner(b) {
+  // Full-screen winner cabinet frame, plus centered handle in the black name box.
+  if (winnerFrameImg && winnerFrameImg.width) {
+    image(winnerFrameImg, 0, 0, width, height);
   }
+
+  // Darken the gameplay behind the winner frame (if any residual draw happened)
+  // so the handle is the only focal point.
+  noStroke();
+  fill(0, 0, 0, 90);
+  rect(0, 0, width, height);
+
+  // Re-draw the cabinet frame on top of the dim layer.
+  if (winnerFrameImg && winnerFrameImg.width) {
+    image(winnerFrameImg, 0, 0, width, height);
+  }
+
+  const handle = (b && b.handle) ? b.handle : "@winner";
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+
+  // Name box placement (tuned for the provided winnerframe.png proportions).
+  const boxCx = width * 0.5;
+  const boxCy = height * 0.50;   // center-ish
+  const maxW = width * 0.78;
+
+  // Responsive font size that also shrinks for long handles.
+  let fs = Math.min(92, Math.max(42, width * 0.075));
+  if (handle.length > 14) fs *= 0.86;
+  if (handle.length > 18) fs *= 0.78;
+
+  // Neon-ish white text with glow
+  drawingContext.save();
+  drawingContext.shadowColor = "rgba(255,255,255,0.9)";
+  drawingContext.shadowBlur = 18;
+  fill(255);
+  textSize(fs);
+  text(handle, boxCx, boxCy, maxW);
+  drawingContext.restore();
+
+  // Confetti continues from existing particles (if any)
+  // (particles are updated elsewhere; this just makes sure they're visible)
+}
+
 
   function drawBubbleLabel(label, x, y, r, alpha){
     label = String(label||"");
