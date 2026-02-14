@@ -276,11 +276,20 @@
 
   function totalRemaining(){ return players.length + extraDots.length; }
 
-  function arenaBounds(){
+  // ===== Bounds separation (FIXES: Zorb disappearing + weird ceiling) =====
+  // Frame bounds: actual inner frame area (top uses FRAME.top)
+  function frameBounds(){
     const L = dx(FRAME.left);
     const R = width - dx(FRAME.right);
-    const topBase = Math.max(FRAME.top, CFG.bubbleCeilingDesignY);
-    const T = dy(topBase);
+    const T = dy(FRAME.top);
+    const B = height - dy(FRAME.bottom);
+    return {L,R,T,B, W:R-L, H:B-T};
+  }
+  // Bubble bounds: same inner frame but top uses bubble ceiling so bubbles don't sit behind Zorb
+  function bubbleBounds(){
+    const L = dx(FRAME.left);
+    const R = width - dx(FRAME.right);
+    const T = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
     const B = height - dy(FRAME.bottom);
     return {L,R,T,B, W:R-L, H:B-T};
   }
@@ -372,33 +381,32 @@
   }
 
   function playOne(snd, vol){
-  if(!audioUnlocked || !snd) return;
-  try{
-    // stop() prevents stacking/voice-stealing on rapid triggers
-    if(snd.isPlaying && snd.isPlaying()) snd.stop();
-    snd.amp(SFX.master * vol, 0);
-    snd.play();
-  }catch(_){}
-}
-
-function playRandPop(){
-  if(!audioUnlocked || !sfxPop.length) return;
-  const snd = random(sfxPop);
-  if(!snd) return;
-  try{
-    if(snd.isPlaying && snd.isPlaying()) snd.stop();
-    snd.amp(SFX.master * SFX.pop, 0);
-    snd.play();
-  }catch(_){}
-}
-
-    function ensureAudioAlive(){
-  if(!audioUnlocked) return;
-  const ctx = getAudioContext?.();
-  if(ctx && ctx.state === 'suspended'){
-    ctx.resume();
+    if(!audioUnlocked || !snd) return;
+    try{
+      if(snd.isPlaying && snd.isPlaying()) snd.stop();
+      snd.amp(SFX.master * vol, 0);
+      snd.play();
+    }catch(_){}
   }
-}
+
+  function playRandPop(){
+    if(!audioUnlocked || !sfxPop.length) return;
+    const snd = random(sfxPop);
+    if(!snd) return;
+    try{
+      if(snd.isPlaying && snd.isPlaying()) snd.stop();
+      snd.amp(SFX.master * SFX.pop, 0);
+      snd.play();
+    }catch(_){}
+  }
+
+  function ensureAudioAlive(){
+    if(!audioUnlocked) return;
+    const ctx = getAudioContext?.();
+    if(ctx && ctx.state === 'suspended'){
+      ctx.resume();
+    }
+  }
 
   // ===== Backend roster =====
   async function loadTodayRound(){
@@ -504,17 +512,18 @@ function playRandPop(){
       drawingContext.imageSmoothingQuality = "high";
     }catch(_){}
   }
-    
-function clipRect(x, y, w, h){
-  const ctx = drawingContext;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, w, h);
-  ctx.clip();
-}
-function unclip(){
-  drawingContext.restore();
-}
+
+  // ---- robust clip helpers (paired save/restore) ----
+  function clipRect(x, y, w, h){
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+  }
+  function unclip(){
+    drawingContext.restore();
+  }
 
   function hookUI(){
     hudEl = document.getElementById('hud');
@@ -581,9 +590,7 @@ function unclip(){
     });
 
     // unlock audio on first gesture
-    const gesture = ()=>{
-      unlockAudioNow();
-    };
+    const gesture = ()=>{ unlockAudioNow(); };
     document.body.addEventListener('touchstart', gesture, { passive:true });
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
@@ -674,7 +681,8 @@ function unclip(){
     const simCount = Math.min(finalCount, PERF.maxSimBubbles);
     const dotCount = Math.max(0, finalCount - simCount);
 
-    const A = arenaBounds();
+    // IMPORTANT: spawn dots/bubbles in bubbleBounds (uses ceiling)
+    const A = bubbleBounds();
     const margin = 6;
 
     for(let i=0;i<dotCount;i++){
@@ -714,7 +722,8 @@ function unclip(){
     const sway = Math.sin(frameCount*CFG.robotSwaySpeedX) * (width*CFG.robotSwayFracX);
     const x = width*0.5 + sway;
     const estHalf = (zorbLoaded && zorbImg) ? (zorbImg.width*CFG.robotScale*0.52) : 120;
-    const A = arenaBounds();
+    // constrain Zorb to FRAME bounds (not bubble ceiling)
+    const A = frameBounds();
     return constrain(x, A.L+estHalf+6, A.R-estHalf-6);
   }
 
@@ -740,12 +749,11 @@ function unclip(){
     updateHudThrottled(false);
   }
 
-
   function step(){
     zorb.recoil *= 0.86;
 
     if(extraDots.length){
-      const A = arenaBounds();
+      const A = bubbleBounds();
       const stride = Math.max(1, PERF.dotUpdateStride|0);
       const phase = frameCount % stride;
 
@@ -889,7 +897,6 @@ function unclip(){
     playOne(sfxFire, SFX.fire);
     zorb.recoil = 1.0;
 
-    // NO shake during countdown, capped + small
     if(simState==="running"){
       frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8)));
     }
@@ -910,37 +917,32 @@ function unclip(){
     }
 
     push();
-translate(sx, sy);
+    translate(sx, sy);
 
-// CLIP gameplay to inner playable area so bubbles/labels never draw past frame
-const A = arenaBounds();
-clipRect(A.L, A.T, A.W, A.H);
+    // IMPORTANT: clip ONLY bubble stuff to bubbleBounds,
+    // then draw Zorb un-clipped so he can sit above the ceiling.
+    const B = bubbleBounds();
+    clipRect(B.L, B.T, B.W, B.H);
 
-drawExtraDots();
-for(const p of projectiles) p.draw();
-for(const b of players) b.draw();
-drawZorb();
-for(const pt of particles) pt.draw();
+    drawExtraDots();
+    for(const p of projectiles) p.draw();
+    for(const b of players) b.draw();
+    for(const pt of particles) pt.draw();
 
-unclip();
+    unclip();
 
-// countdown + winner should NOT be clipped (they’re full-screen overlays)
-if(simState==="countdown") drawCountdown();
-if(simState==="finished" && players.length===1) drawWinner(players[0]);
+    // Zorb is NOT clipped (fixes "Zorb disappears")
+    drawZorb();
 
-pop();
+    if(simState==="countdown") drawCountdown();
+    if(simState==="finished" && players.length===1) drawWinner(players[0]);
 
+    pop();
 
     // ===== Overlays (NO shake) =====
-    // UI frame should NEVER crop: draw exact to canvas
     if(simState!=="finished") drawUIFrameOverlayExact();
-
-    // Pulse border around WHOLE frame (not just one side)
     if(simState!=="finished") drawFullPulsingBorder();
-
-    // Text in top banner boxes MUST be above the ui_frame.png
     if(simState!=="finished") drawTopBannerTextBoxes();
-
     if(CFG.scanlines) drawScanlines();
   }
 
@@ -953,34 +955,31 @@ pop();
   }
 
   function drawFullPulsingBorder(){
-  // 24px wide border inset 8px, pulsing, around the whole frame
-  const inset = dx(8);
-  const bw = dx(24);
-  const pulse = (sin(frameCount*0.08)*0.5+0.5);
+    const inset = dx(8);
+    const bw = dx(24);
+    const pulse = (sin(frameCount*0.08)*0.5+0.5);
 
-  // a touch rounder to match ui_frame.png corners
-  const r = dx(26); // <-- was ~18; tweak 24–30 if needed
+    const r = dx(26); // matches ui_frame corners better
 
-  const x = inset + bw*0.5;
-  const y = inset + bw*0.5;
-  const w = width  - 2*(inset + bw*0.5);
-  const h = height - 2*(inset + bw*0.5);
+    const x = inset + bw*0.5;
+    const y = inset + bw*0.5;
+    const w = width  - 2*(inset + bw*0.5);
+    const h = height - 2*(inset + bw*0.5);
 
-  drawingContext.save();
-  drawingContext.globalCompositeOperation = "screen";
-  noFill();
+    drawingContext.save();
+    drawingContext.globalCompositeOperation = "screen";
+    noFill();
 
-  strokeWeight(bw);
-  stroke(255,0,200, 60 + pulse*85);
-  rect(x, y, w, h, r);
+    strokeWeight(bw);
+    stroke(255,0,200, 60 + pulse*85);
+    rect(x, y, w, h, r);
 
-  strokeWeight(Math.max(1, bw*0.45));
-  stroke(160,80,255, 40 + pulse*55);
-  rect(x, y, w, h, r);
+    strokeWeight(Math.max(1, bw*0.45));
+    stroke(160,80,255, 40 + pulse*55);
+    rect(x, y, w, h, r);
 
-  drawingContext.restore();
-}
-
+    drawingContext.restore();
+  }
 
   function drawVignette(){
     noFill();
@@ -1020,7 +1019,6 @@ pop();
     textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
     const pad = Math.max(6, w*0.06);
 
-    // clip to exact box
     drawingContext.save();
     drawingContext.beginPath();
     drawingContext.rect(x, y, w, h);
@@ -1048,7 +1046,6 @@ pop();
   }
 
   function drawScanlines(){
-    // very subtle so it doesn't degrade IG output
     noStroke();
     for(let y=0; y<height; y+=3){
       fill(0,0,0,14);
@@ -1095,7 +1092,6 @@ pop();
     if(secLeft !== lastCountdownSec){
       lastCountdownSec = secLeft;
       playOne(sfxWoosh, SFX.woosh);
-      // NO shake here (keeps FPS stable)
     }
 
     noStroke();
@@ -1157,53 +1153,48 @@ pop();
     drawingContext.restore();
 
     // --- CTA multiline (2–4 lines), centered, outlined for readability ---
-const ctaX = width * 0.50;
-const ctaY = height * 0.68;
-const ctaMaxW = width * 0.78;
+    const ctaX = width * 0.50;
+    const ctaY = height * 0.68;
+    const ctaMaxW = width * 0.78;
 
-const lines = [
-  'Follow @Zorbi',
-  'Comment "IN"',
-  'to enter tomorrow'
-];
+    const lines = [
+      'Follow @Zorbi',
+      'Comment "IN"',
+      'to enter tomorrow'
+    ];
 
-let ctaSize = 22;
-textAlign(CENTER, CENTER);
-textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
-textSize(ctaSize);
+    let ctaSize = 22;
+    textAlign(CENTER, CENTER);
+    textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
+    textSize(ctaSize);
 
-// shrink if needed to fit max width
-while(lines.some(L => textWidth(L) > ctaMaxW) && ctaSize > 14){
-  ctaSize -= 1;
-  textSize(ctaSize);
-}
+    while(lines.some(L => textWidth(L) > ctaMaxW) && ctaSize > 14){
+      ctaSize -= 1;
+      textSize(ctaSize);
+    }
 
-const lineH = ctaSize * 1.25;
-const blockH = lineH * lines.length;
-const startY = ctaY - blockH/2 + lineH/2;
+    const lineH = ctaSize * 1.25;
+    const blockH = lineH * lines.length;
+    const startY = ctaY - blockH/2 + lineH/2;
 
-drawingContext.save();
-drawingContext.shadowBlur = 10;
-drawingContext.shadowColor = "rgba(160,80,255,0.55)";
+    drawingContext.save();
+    drawingContext.shadowBlur = 10;
+    drawingContext.shadowColor = "rgba(160,80,255,0.55)";
 
-// strong black outline
-stroke(0,0,0,235);
-strokeWeight(7);
-fill(255,255,255,245);
+    stroke(0,0,0,235);
+    strokeWeight(7);
+    fill(255,255,255,245);
 
-for(let i=0;i<lines.length;i++){
-  text(lines[i], ctaX, startY + i*lineH);
-}
-
-drawingContext.restore();
-
+    for(let i=0;i<lines.length;i++){
+      text(lines[i], ctaX, startY + i*lineH);
+    }
+    drawingContext.restore();
   }
 
   function popBubble(b){
     playRandPop();
     playOne(sfxBass, SFX.bass);
 
-    // reduced shake
     if(simState==="running"){
       frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
     }
@@ -1289,7 +1280,8 @@ drawingContext.restore();
       this.x += this.v.x;
       this.y += this.v.y;
 
-      const A = arenaBounds();
+      // IMPORTANT: bubbles obey bubbleBounds (ceiling)
+      const A = bubbleBounds();
       if(this.x < A.L + this.r){ this.x=A.L + this.r; this.v.x*=-1; }
       if(this.x > A.R - this.r){ this.x=A.R - this.r; this.v.x*=-1; }
       if(this.y < A.T + this.r){ this.y=A.T + this.r; this.v.y*=-1; }
