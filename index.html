@@ -181,6 +181,9 @@
     bgColor:'#0B0F1F',
     vignette:true,
 
+    // Displayed in top HUD (set from backend round meta when available)
+    roundNumber: 2,
+
     playerCount:50,
 
     wanderForce:0.16,
@@ -269,9 +272,20 @@ multiElimChance:0.08,
     if(n <= 5) return CFG.fireRateFinal;
 
     // base "crowd" speed (shots/sec)
-    const base = 0.95 + Math.min(2.15, (start / 100) * 1.85); // up to ~3.1 at 100
+    let base;
+    if(start <= 10) base = 1.70;
+    else if(start <= 20) base = 1.40;
+    else base = 0.95 + Math.min(2.15, (start / 100) * 1.85); // up to ~3.1 at 100
     const t = (n - 5) / Math.max(1, (start - 5));            // 0 (at 5) .. 1 (at start)
     return CFG.fireRateFinal + (base - CFG.fireRateFinal) * t;
+  }
+
+
+  function buildCountdownLabels(startCount){
+    // Adaptive countdown for pacing: fewer entrants = fewer beats
+    if(startCount >= 25) return ["3","2","1","GO!"];
+    if(startCount >= 10) return ["READY?","GO!"];
+    return ["GO!"];
   }
 
   // keep bubbles inside the glowing frame
@@ -312,6 +326,10 @@ multiElimChance:0.08,
   };
     
   let zorbImg, zorbLoaded=false;
+  // Optional UI image overlays (add these files to the repo root)
+  // - background.png : slim 9:16 UI frame overlay (transparent center recommended)
+  // - winnerframe.png: winner screen frame with an empty/black name box
+  let uiFrameImg=null, winnerFrameImg=null;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
   let paused=false, frameShake=0;
@@ -357,6 +375,8 @@ multiElimChance:0.08,
 
   let simState="setup";
   let countdownFrames=0;
+  let countdownLabels = [];
+  let countdownTotalSec = 0;
 
   let initialPlayerCount = 0;
 
@@ -398,12 +418,15 @@ multiElimChance:0.08,
 
       ROUND_META = {
         round_date: new Date().toISOString().slice(0,10),
+        round_number: 2,
         mode: "offline",
         claimed_total: null,
         finale_count: finalCount,
         status: "offline",
         seed: null,
       };
+
+      CFG.roundNumber = ROUND_META.round_number;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent = "Load roster (OFFLINE TEST)";
@@ -433,12 +456,15 @@ multiElimChance:0.08,
       BACKEND_WINNER = round?.winner || null;
       ROUND_META = {
         round_date: round?.round_date || null,
+        round_number: Number(round?.round_number || round?.round || 2) || 2,
         mode: round?.mode || null,
         claimed_total: round?.claimed_total ?? null,
         finale_count: round?.finale_count ?? finalCount,
         status: round?.status || null,
         seed: round?.seed ?? null,
       };
+
+      CFG.roundNumber = ROUND_META.round_number;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent =
@@ -462,6 +488,15 @@ multiElimChance:0.08,
     zorbImg = loadImage('Zorb2.PNG?v=4',
       ()=>{ zorbLoaded=true; },
       ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
+    );
+    // Optional overlays (won't break if missing)
+    uiFrameImg = loadImage('background.png',
+      ()=>{},
+      ()=>{ uiFrameImg=null; console.warn('background.png not found (UI frame overlay disabled)'); }
+    );
+    winnerFrameImg = loadImage('winnerframe.png',
+      ()=>{},
+      ()=>{ winnerFrameImg=null; console.warn('winnerframe.png not found (winner frame disabled)'); }
     );
     sfxPop = [ loadSound('pop1.mp3'), loadSound('pop2.mp3'), loadSound('pop3.mp3'), loadSound('pop4.mp3') ];
     sfxWinner  = loadSound('winner.mp3');
@@ -653,7 +688,11 @@ function beginCountdown(){
 
     setTimeout(() => {
       simState = "countdown";
-      countdownFrames = max(1, floor(CFG.countdownSec * 60));
+      const startCount = Math.max(2, ARENA_START_COUNT || CFG.playerCount || 50);
+      countdownLabels = buildCountdownLabels(startCount);
+      countdownTotalSec = countdownLabels.length;
+      countdownFrames = max(1, floor(countdownTotalSec * 60));
+      lastCountdownSec = -1;
     }, 180);
   }
 
@@ -766,6 +805,7 @@ function beginCountdown(){
     countdownFrames = 0;
 
     const count = max(2, CFG.playerCount);
+    ARENA_START_COUNT = count;
 
     // Cap the expensive bubble simulation; represent the rest as lightweight "dots"
     const simCount = min(count, PERF.maxSimBubbles);
@@ -1095,7 +1135,18 @@ spawnConfetti();
 
     if(confettiActive) drawConfetti();
 
+    // UI frame overlay (above gameplay, below scanlines)
+    drawUIFrameOverlay();
     drawScanlines();
+    pop();
+  }
+
+  function drawUIFrameOverlay(){
+    if(!uiFrameImg) return;
+    push();
+    imageMode(CORNER);
+    // If your frame has an opaque center, export a version with a transparent center.
+    image(uiFrameImg, 0, 0, width, height);
     pop();
   }
 
@@ -1351,6 +1402,8 @@ function drawFinaleFrameGlow(){
   
   function drawCountdown(){
     const secLeft = ceil(countdownFrames/60);
+    const idx = (countdownLabels && countdownLabels.length) ? (countdownLabels.length - secLeft) : 0;
+    const label = (countdownLabels && countdownLabels.length) ? countdownLabels[constrain(idx, 0, countdownLabels.length-1)] : String(secLeft);
 
     // Play whoosh once per number
     if(secLeft !== lastCountdownSec){
@@ -1382,15 +1435,15 @@ function drawFinaleFrameGlow(){
     ctx.shadowBlur = 42;
     ctx.shadowColor = "rgba(255, 0, 200, 0.70)";
     fill(255,255,255,255);
-    textSize(86);
-    text(secLeft, 0, 0);
+    textSize(label === "GO!" ? 96 : (label === "READY?" ? 74 : 86));
+    text(label, 0, 0);
     ctx.restore();
 
     // Subtle outline to keep crisp
     stroke(255,255,255,90);
     strokeWeight(3);
     noFill();
-    text(secLeft, 0, 0);
+    text(label,  0, 0);
 
     pop();
   }
@@ -1405,8 +1458,9 @@ function drawFinaleFrameGlow(){
   function triggerFinal5Overlay(){
     if(final5Active) return;
     final5Active = true;
-    // give people time to actually read it
-    final5Frames = 150; // ~2.5s at 60fps
+    // Give time to read (shorter for small rounds)
+    const startCount = Math.max(2, ARENA_START_COUNT || CFG.playerCount || 50);
+    final5Frames = (startCount <= 12) ? 80 : (startCount <= 40) ? 110 : 140;
     // punch audio
     try{ playOne(sfxWoosh, 0.75); }catch(_){}
     try{ playOne(sfxBass, 0.55); }catch(_){}
@@ -1425,15 +1479,26 @@ function drawFinal5Overlay(){
     const cx = width*0.5 + dx;
     const cy = height*0.40 + dy;
 
+    // Frame-following glow (replaces the old rounded-edge border that clipped banner text)
+    const pad = 18;
     const ctx = drawingContext;
+    ctx.save();
+    ctx.shadowBlur = 38 + pulse*18;
+    ctx.shadowColor = "rgba(255, 0, 200, 0.55)";
+    noFill();
+    stroke(255, 0, 200, 90);
+    strokeWeight(6);
+    rect(pad, pad, width-pad*2, height-pad*2, 22);
+    ctx.restore();
+
     ctx.save();
     ctx.shadowBlur = 44 + pulse*18;
     ctx.shadowColor = "rgba(255, 0, 200, 0.70)";
 
     textAlign(CENTER,CENTER);
     fill(255,255,255,252);
-    textSize(56);
-    text("FINAL 5!", cx, cy);
+    textSize(48);
+    text("FINAL 5 REACHED", cx, cy);
     ctx.restore();
 
     // secondary line
@@ -1442,133 +1507,60 @@ function drawFinal5Overlay(){
     ctx.shadowColor = "rgba(160, 80, 255, 0.65)";
     fill(210, 240, 255, 250);
     textSize(16);
-    text("SUDDEN DEATH MODE", cx, cy + 44);
+    text("ONLY ONE SURVIVES", cx, cy + 44);
     ctx.restore();
   }
 
   function drawWinner(b){
-    // Retro “arcade win screen” – clean neon, no cheap gradients
-    const cx = width*0.5, cy = height*0.52;
-    const pulse = sin(frameCount*0.06)*0.5+0.5;
+    // Winner screen should feel like a high-score splash.
+    background(6,4,12);
+    drawStarfield(true);
+    if(confettiActive) drawConfetti();
 
-    // Dim + subtle scan glow
-    noStroke();
-    fill(0,0,0,140);
-    rect(0,0,width,height);
+    // Winner frame art (recommended)
+    if(winnerFrameImg){
+      imageMode(CORNER);
+      image(winnerFrameImg, 0, 0, width, height);
+    }
 
-    // Center aura
-    const R = min(width,height)*0.22;
-    drawingContext.save();
-    drawingContext.shadowBlur = 48;
-    drawingContext.shadowColor = "rgba(160,80,255,0.55)";
-    fill(160, 80, 255, 34 + pulse*26);
-    circle(cx, cy, R*3.0 + pulse*26);
-    drawingContext.restore();
+    const winner = players.find(p=>p.id===winId);
+    const name = String(winner?.handle || winner?.id || "WINNER");
 
-    // Winner bubble ring
-    drawingContext.save();
-    drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(120,220,255,0.55)";
-    stroke(190,245,255,160);
-    strokeWeight(7);
-    fill(255,255,255,14);
-    circle(cx, cy, R*2.06);
-    drawingContext.restore();
+    // Center username inside the name box on winnerframe.png
+    const nameX = width * 0.50;
+    const nameY = height * 0.44;
+    const maxW  = width * 0.78;
 
-    // Inner shine
-    noStroke();
-    fill(255,255,255,46);
-    ellipse(cx - R*0.26, cy - R*0.30, R*1.05, R*0.70);
+    textAlign(CENTER, CENTER);
+    textSize(min(64, width*0.10));
 
-    // Handle
-    const label = (b.handle ? "@"+b.handle : ("#"+b.id));
-    let ts = R*0.52;
-    if(label.length > 10) ts = R*0.40;
-    if(label.length > 14) ts = R*0.33;
+    // Fit-to-width if name is long
+    let ts = textSize();
+    while(textWidth(name) > maxW && ts > 22){
+      ts -= 2;
+      textSize(ts);
+    }
 
-    textAlign(CENTER,CENTER);
-    textSize(ts);
-
-    // Crisp neon text (outline + glow)
     drawingContext.save();
     drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(255,0,200,0.75)";
+    drawingContext.shadowColor = "rgba(255,180,60,0.75)";
     stroke(0,0,0,220);
     strokeWeight(10);
-    fill(255,255,255,252);
-    text(label, cx, cy+6);
+    fill(255);
+    text(name, nameX, nameY);
     drawingContext.restore();
 
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(120,220,255,0.80)";
-    stroke(255,255,255,110);
-    strokeWeight(3);
-    fill(255,255,255,255);
-    text(label, cx, cy+6);
-    drawingContext.restore();
-
-    // MARQUEE banner – chunky, arcade-like
-    const by = height*0.16;
-    const bannerW = min(width*0.90, 560);
-    const bannerH = 78;
-
-    // outer frame
-    drawingContext.save();
-    drawingContext.shadowBlur = 34;
-    drawingContext.shadowColor = "rgba(255,0,200,0.55)";
-    noFill();
-    stroke(255,0,200, 160);
-    strokeWeight(10);
-    rectMode(CENTER);
-    rect(cx, by, bannerW, bannerH, 18);
-    drawingContext.restore();
-
-    // inner glow plate
-    const grd = drawingContext.createLinearGradient(cx-bannerW/2, by, cx+bannerW/2, by);
-    grd.addColorStop(0, "rgba(255,0,200,0.35)");
-    grd.addColorStop(0.5, "rgba(160,80,255,0.25)");
-    grd.addColorStop(1, "rgba(120,220,255,0.28)");
-    drawingContext.save();
-    drawingContext.fillStyle = grd;
-    noStroke();
-    rect(cx, by, bannerW-10, bannerH-10, 14);
-    drawingContext.restore();
-
-    // Text
-    textAlign(CENTER, CENTER);
-    textSize(44);
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 32;
-    drawingContext.shadowColor = "rgba(255,0,200,0.85)";
-    stroke(0,0,0,240);
-    strokeWeight(12);
-    fill(255,255,255,255);
-    text("WINNER!", cx, by+2);
-    drawingContext.restore();
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 20;
-    drawingContext.shadowColor = "rgba(120,220,255,0.85)";
-    stroke(255,255,255,120);
-    strokeWeight(3);
-    fill(255,255,255,255);
-    text("WINNER!", cx, by+2);
-    drawingContext.restore();
-
-    // CTA footer (small, clean)
+    // Small CTA
     textSize(18);
     drawingContext.save();
     drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(160,80,255,0.65)";
-    fill(230, 210, 255, 250);
-    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', cx, height*0.29);
+    drawingContext.shadowColor = "rgba(160,80,255,0.75)";
+    fill(230, 210, 255, 240);
+    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', width*0.5, height*0.68);
     drawingContext.restore();
-
-    rectMode(CORNER);
   }
-function drawBubbleLabel(label, x, y, r, alpha){
+
+  function drawBubbleLabel(label, x, y, r, alpha){
     label = String(label||"");
     let shown = label;
     if(shown.length>14) shown = shown.slice(0,13)+"…";
