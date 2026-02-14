@@ -1095,7 +1095,7 @@ spawnConfetti();
 
     if(confettiActive) drawConfetti();
 
-    // drawScanlines
+    drawScanlines();
     pop();
   }
 
@@ -1251,7 +1251,7 @@ function drawExtraDots(){
     drawingContext.restore();
   }
 
-  /* function drawScanlines(){
+  function drawScanlines(){
     // subtle CRT scanlines + vignette noise (kept light so it doesn't look “cheap”)
     noStroke();
     for(let y=0; y<height; y+=3){
@@ -1264,7 +1264,7 @@ function drawExtraDots(){
     fill(160, 80, 255, 10);
     rect(0,0,width,height);
     drawingContext.restore();
-  } */
+  }
     
 function drawFinaleFrameGlow(){
     if(!(simState === "running" && players.length <= 5)) return;
