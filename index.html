@@ -120,7 +120,19 @@
     select:focus{border-color:rgba(160,80,255,0.65); box-shadow:0 0 0 2px rgba(160,80,255,0.25)}
     option{background:#0B0F1F;color:#fff;}
 
-  </style>
+  
+/* Improve HUD contrast on dark/star backgrounds */
+#hud, #hud * { color: rgba(255,255,255,0.92); }
+#hud button, #hud .chip, #hud input, #hud select {
+  background: rgba(10, 10, 20, 0.70);
+  border: 1px solid rgba(255,255,255,0.22);
+  color: rgba(255,255,255,0.95);
+  box-shadow: 0 0 12px rgba(180, 80, 255, 0.18);
+  backdrop-filter: blur(6px);
+}
+#hud button:hover { background: rgba(20,20,40,0.75); }
+#hud button:active { transform: translateY(1px); }
+</style>
 </head>
 <body>
   <div id="toast">UI shown</div>
@@ -498,35 +510,32 @@ multiElimChance:0.08,
   }
 
   function preload(){
-    // Core sprite
+    // Core sprite + overlays (files should exist in repo root)
+    //   zorb.png
+    //   background.png
+    //   ui_frame.png  (transparent PNG overlay)
+    //   winnerframe.png (winner overlay; transparent PNG)
     zorbImg = loadImage('zorb.png?v=4',
       ()=>{ zorbLoaded=true; },
-      ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
+      ()=>{ zorbLoaded=false; console.warn("zorb.png failed to load"); }
     );
 
-    // Background + frame overlays (make sure these files exist in the repo root)
-    // Recommended canonical names (lowercase):
-    //   background.png
-    //   ui_frame.png
-    //   winnerframe.png
-    //
-    // Fallback: also tries uppercase variants so a mismatched filename won’t break the run.
     bgImg = loadImage('background.png',
       ()=>{},
-      ()=>{ bgImg = loadImage('background.PNG', ()=>{}, ()=>{ console.warn("Background image missing (background.png)"); }); }
+      ()=>{ console.warn("Missing background.png"); }
     );
 
     uiFrameImg = loadImage('ui_frame.png',
       ()=>{},
-      ()=>{ uiFrameImg = loadImage('ui_frame.PNG', ()=>{}, ()=>{ console.warn("UI frame missing (ui_frame.png)"); }); }
+      ()=>{ console.warn("Missing ui_frame.png"); }
     );
 
     winnerFrameImg = loadImage('winnerframe.png',
       ()=>{},
-      ()=>{ winnerFrameImg = loadImage('winnerframe.PNG', ()=>{}, ()=>{ console.warn("Winner frame missing (winnerframe.png)"); }); }
+      ()=>{ console.warn("Missing winnerframe.png"); }
     );
   }
-function setup(){
+async async function setup(){
     createOrResizeCanvas();
     hookUI();
     await loadTodayRound();
