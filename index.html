@@ -27,10 +27,23 @@
       color:var(--text);font-size:12px;line-height:1.25;
       background:var(--panel);border:1px solid var(--stroke);
       padding:10px 12px;border-radius:12px;backdrop-filter:blur(10px);
-      max-width:390px;
+      max-width:420px;
     }
     #hud b{font-size:13px}
     #hud .tiny{opacity:.78;font-size:11px;margin-top:6px}
+    #hud .row{display:flex;gap:8px;align-items:center;margin-top:8px}
+    #hud .btnTiny{
+      font:inherit;
+      font-weight:800;
+      letter-spacing:.2px;
+      color:rgba(255,255,255,0.92);
+      background:rgba(0,0,0,0.55);
+      border:1px solid rgba(255,255,255,0.18);
+      border-radius:10px;
+      padding:6px 10px;
+      cursor:pointer;
+    }
+    #hud .btnTiny:active{transform:translateY(1px);background:var(--btnHover)}
 
     #panel{
       position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
@@ -76,7 +89,6 @@
       text-shadow:0 2px 10px rgba(0,0,0,0.6);
     }
     .btn:active{transform:translateY(1px);background:var(--btnHover)}
-    .btn.small{min-width:52px;padding:10px 10px}
     .btn.wide{min-width:110px}
     .btn.primary{border-color:rgba(120,255,170,0.35);background:rgba(120,255,170,0.12)}
     select.btn{
@@ -100,12 +112,16 @@
     #toast.show{opacity:1}
   </style>
 </head>
+
 <body>
   <div id="toast">UI shown</div>
 
   <div id="hud">
     <b>Zorbi – Today’s Round</b>
     <div id="hudStatus">Loading…</div>
+    <div class="row">
+      <button class="btnTiny" id="btnMute" type="button">MUTE</button>
+    </div>
     <div class="tiny">Tap background: pause/resume • Tap anywhere when UI hidden: show UI</div>
   </div>
 
@@ -169,42 +185,29 @@
   function dh(h){ return h * (height / DESIGN.h); }
 
   // ===== Frame/Playable bounds in DESIGN pixels (your measurements) =====
-  const FRAME = {
-    left: 46,
-    right: 46,
-    top: 160,
-    bottom: 32
-  };
-
-  function arenaBounds(){
-    const L = dx(FRAME.left);
-    const R = width - dx(FRAME.right);
-    const T = dy(FRAME.top);
-    const B = height - dy(FRAME.bottom);
-    return {L,R,T,B, W:R-L, H:B-T};
-  }
+  const FRAME = { left:46, right:46, top:160, bottom:32 };
 
   const CFG = {
     aspectW:9, aspectH:16,
     baseHeight:1920,
     bgColor:'#0B0F1F',
     vignette:true,
+    scanlines:true, // toggle if you want cleaner output
 
-    roundNumber: 2,
+    // bubble ceiling so they don't sit behind Zorbi
+    bubbleCeilingDesignY: 330, // <-- tweak: increase to push bubbles lower
 
-    // Motion (less "orbiting circle", more organic fill)
+    // Motion
     wanderForce:0.18,
     maxSpeed:2.45,
     bounceDamping:0.986,
     separationStrength:0.30,
-
-    // Swirl is now *mild* (prevents circle orbit)
     swirlStrength:0.055,
     swirlJukeChance:0.010,
     swirlJukeForce:1.35,
 
-    // Zorbi sizing restored
-    robotScale:0.22,
+    // Zorbi size
+    robotScale:0.24,
     robotY:0.18,
     robotHoverAmpY:9,
     robotHoverSpeedY:0.028,
@@ -223,22 +226,20 @@
     nearMissChance:0.10,
     ricochetChance:0.06,
 
-    screenShakePop:10,
-    screenShakeShot:2.0,
+    // SHAKE reduced hard
+    screenShakePop:4.0,
+    screenShakeShot:1.0,
+    shakeDecay:0.92,
+    shakeCap:3.0,
 
-    popParticles:18,
-    popLife:24,
-    sparkLife:16,
+    popParticles:14,
+    popLife:22,
+    sparkLife:14,
 
     countdownSec:3,
   };
 
-  // Performance scaling
-  const PERF = {
-    maxSimBubbles: 160,
-    dotUpdateStride: 2,
-    showNamesAtOrBelow: 100,
-  };
+  const PERF = { maxSimBubbles: 160, dotUpdateStride: 2 };
 
   // ===== Assets =====
   let zorbImg, zorbLoaded=false;
@@ -246,6 +247,7 @@
 
   // Audio filenames matched to your repo
   let audioUnlocked=false;
+  let musicMuted=false;
   let sfxPop=[], sfxWinner=null, sfxReload=null, sfxFire=null, sfxBass=null, sfxWoosh=null, sfxTension=null, sfxMusic=null;
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
   let musicStarted=false;
@@ -256,7 +258,7 @@
   // ===== Sim state =====
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[];
-  let extraDots=[]; // lightweight crowd
+  let extraDots=[];
   let paused=false;
   let frameShake=0;
   let simState="setup";
@@ -274,40 +276,41 @@
 
   function totalRemaining(){ return players.length + extraDots.length; }
 
+  function arenaBounds(){
+    const L = dx(FRAME.left);
+    const R = width - dx(FRAME.right);
+    const topBase = Math.max(FRAME.top, CFG.bubbleCeilingDesignY);
+    const T = dy(topBase);
+    const B = height - dy(FRAME.bottom);
+    return {L,R,T,B, W:R-L, H:B-T};
+  }
+
   // ===== Round timing target (~<= 30s) =====
   function targetRateForDuration(startCount){
-    const duration = 28; // seconds (aim under 30)
+    const duration = 28;
     const shotsNeeded = Math.max(1, startCount - 1);
-    const r = shotsNeeded / duration;         // eliminations/sec
-    return Math.min(12, Math.max(1.25, r));   // clamp
+    const r = shotsNeeded / duration;
+    return Math.min(12, Math.max(1.25, r));
   }
   function arenaFireRate(){
     const start = Math.max(2, ARENA_START_COUNT || 50);
     const n = totalRemaining();
-
-    // finals slow-down (keeps drama)
-    if(n <= 2) return 3.2;  // quick finish
+    if(n <= 2) return 3.2;
     if(n <= 5) return 2.2;
-
-    // large pool: make it fast enough to finish < 30s
     const base = targetRateForDuration(start);
-    // slight taper as you approach finals
-    const t = (n - 5) / Math.max(1, (start - 5)); // 0..1
+    const t = (n - 5) / Math.max(1, (start - 5));
     return 2.2 + (base - 2.2) * t;
   }
-
   function arenaChaos(){
     const start = Math.max(2, ARENA_START_COUNT || 50);
     const prog = 1 - ((Math.max(1, totalRemaining()) - 1) / (start - 1));
     return 1.0 + 0.25*prog;
   }
-
   function buildCountdownLabels(startCount){
     if(startCount >= 25) return ["3","2","1","GO!"];
     if(startCount >= 10) return ["READY?","GO!"];
     return ["GO!"];
   }
-
   function getDynamicBubbleSize(count){
     if(count<=20)  return {min:62,max:86};
     if(count<=40)  return {min:50,max:72};
@@ -315,20 +318,18 @@
     if(count<=100) return {min:22,max:34};
     return {min:16,max:22};
   }
-
   function labelAlphaForRemaining(remaining, r){
     const byCount = constrain(map(remaining, 100, 30, 0, 255), 0, 255);
     const bySize  = constrain(map(r, 18, 34, 0, 255), 0, 255);
     return Math.min(byCount, bySize);
   }
 
-  // ===== Audio helpers =====
+  // ===== Audio =====
   function unlockAudioNow(){
     if(audioUnlocked) return;
     try{ userStartAudio(); }catch(_){}
     audioUnlocked = true;
 
-    // start tension loop silently
     if(sfxTension){
       try{
         sfxTension.setLoop(true);
@@ -336,12 +337,12 @@
         sfxTension.play();
       }catch(_){}
     }
-    startMusicSoft();
+    if(!musicMuted) startMusicSoft();
     updatePanelStatusThrottled(true);
   }
 
   function startMusicSoft(){
-    if(!sfxMusic || !audioUnlocked) return;
+    if(!sfxMusic || !audioUnlocked || musicMuted) return;
     if(musicStarted) return;
     musicStarted = true;
     try{
@@ -350,18 +351,24 @@
       sfxMusic.amp(0, 0);
       sfxMusic.play();
       sfxMusic.amp(MUSIC.bed, Math.max(0.2, MUSIC.fadeInMs/1000));
-    }catch(e){
-      console.warn("music start failed", e);
-    }
+    }catch(e){ console.warn("music start failed", e); }
   }
-
   function stopMusicSoft(){
     if(!sfxMusic) return;
     try{
-      sfxMusic.amp(0, 0.25);
-      setTimeout(()=>{ try{sfxMusic.stop();}catch(_){} }, 280);
+      sfxMusic.amp(0, 0.18);
+      setTimeout(()=>{ try{sfxMusic.stop();}catch(_){} }, 220);
     }catch(_){}
     musicStarted = false;
+  }
+
+  function setMusicMuted(on){
+    musicMuted = !!on;
+    const btn = document.getElementById("btnMute");
+    if(btn) btn.textContent = musicMuted ? "UNMUTE" : "MUTE";
+    if(!audioUnlocked) return;
+    if(musicMuted) stopMusicSoft();
+    else startMusicSoft();
   }
 
   function playOne(snd, vol){
@@ -388,19 +395,10 @@
       BACKEND_WINNER = null;
       const finalCount = Math.max(2, Math.min(5000, Number(OFFLINE_COUNT||250)));
       rosterHandles = Array.from({length: finalCount}, (_,i)=> (i<9999?("player"+(i+1)):("p"+(i+1))));
-      ROUND_META = {
-        round_date: new Date().toISOString().slice(0,10),
-        round_number: 2,
-        mode: "offline",
-        claimed_total: null,
-        finale_count: finalCount,
-        status: "offline",
-        seed: null,
-      };
+      ROUND_META = { round_date: new Date().toISOString().slice(0,10), round_number:2, mode:"offline", finale_count:finalCount };
       document.getElementById("maxCountLabel").textContent = String(finalCount);
       document.getElementById("panelTitle").textContent = "Load roster (OFFLINE TEST)";
-      updateHudThrottled(true);
-      updatePanelStatusThrottled(true);
+      updateHudThrottled(true); updatePanelStatusThrottled(true);
       return true;
     }
 
@@ -425,22 +423,17 @@
         round_date: round?.round_date || null,
         round_number: Number(round?.round_number || round?.round || 2) || 2,
         mode: round?.mode || "live",
-        claimed_total: round?.claimed_total ?? null,
         finale_count: round?.finale_count ?? finalCount,
-        status: round?.status || null,
-        seed: round?.seed ?? null,
       };
 
       document.getElementById("maxCountLabel").textContent = String(finalCount);
       document.getElementById("panelTitle").textContent = "Load today’s roster (LIVE)";
-      updateHudThrottled(true);
-      updatePanelStatusThrottled(true);
+      updateHudThrottled(true); updatePanelStatusThrottled(true);
       return true;
     }catch(e){
       BACKEND_OK=false;
       document.getElementById("panelTitle").textContent = "Load today’s roster (offline mode)";
-      updateHudThrottled(true);
-      updatePanelStatusThrottled(true);
+      updateHudThrottled(true); updatePanelStatusThrottled(true);
       console.warn("Round load failed:", e);
       return false;
     }
@@ -454,7 +447,6 @@
     uiFrameImg = loadImage('ui_frame.png', ()=>{}, ()=>{ console.warn("Missing ui_frame.png"); });
     winnerFrameImg = loadImage('winnerframe.png', ()=>{}, ()=>{ console.warn("Missing winnerframe.png"); });
 
-    // Sounds (matched to your filenames)
     sfxFire   = loadSound('fire.mp3',   ()=>{}, ()=>console.warn("Missing fire.mp3"));
     sfxReload = loadSound('reload.mp3', ()=>{}, ()=>console.warn("Missing reload.mp3"));
     sfxWinner = loadSound('winner.mp3', ()=>{}, ()=>console.warn("Missing winner.mp3"));
@@ -514,37 +506,42 @@
     panelBackendEl = document.getElementById('panelBackend');
     startBtnEl = document.getElementById('startBtn');
 
+    document.getElementById('btnMute').addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      unlockAudioNow();
+      setMusicMuted(!musicMuted);
+    });
+
     const modeBtnEl = document.getElementById('modeBtn');
     const offlineSelEl = document.getElementById('offlineCountSel');
 
-    if(modeBtnEl){
-      modeBtnEl.addEventListener('click', ()=>{
-        USE_BACKEND = !USE_BACKEND;
-        modeBtnEl.textContent = USE_BACKEND ? "MODE: LIVE" : "MODE: OFFLINE";
-        toastEl.textContent = USE_BACKEND ? "LIVE mode" : "OFFLINE test mode";
+    modeBtnEl.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      USE_BACKEND = !USE_BACKEND;
+      modeBtnEl.textContent = USE_BACKEND ? "MODE: LIVE" : "MODE: OFFLINE";
+      toastEl.textContent = USE_BACKEND ? "LIVE mode" : "OFFLINE test mode";
+      toastPulse();
+      bumpUI();
+      loadTodayRound();
+    });
+
+    offlineSelEl.addEventListener('change', (ev)=>{
+      ev.stopPropagation();
+      OFFLINE_COUNT = Number(offlineSelEl.value||250);
+      if(!USE_BACKEND){
+        toastEl.textContent = `OFFLINE: ${OFFLINE_COUNT}`;
         toastPulse();
-        bumpUI();
         loadTodayRound();
-      });
-    }
+      }
+    });
 
-    if(offlineSelEl){
-      offlineSelEl.addEventListener('change', ()=>{
-        OFFLINE_COUNT = Number(offlineSelEl.value||250);
-        if(!USE_BACKEND){
-          toastEl.textContent = `OFFLINE: ${OFFLINE_COUNT}`;
-          toastPulse();
-          loadTodayRound();
-        }
-      });
-    }
+    document.getElementById('btnShowPanel').addEventListener('click', (ev)=>{ ev.stopPropagation(); showPanel(true); showUI(true); });
+    document.getElementById('btnPause').addEventListener('click', (ev)=>{ ev.stopPropagation(); togglePause(); bumpUI(); });
+    document.getElementById('btnRestart').addEventListener('click', (ev)=>{ ev.stopPropagation(); resetSim(false); showUI(true); showPanel(true); });
+    document.getElementById('btnHide').addEventListener('click', (ev)=>{ ev.stopPropagation(); setUIHidden(true); });
 
-    document.getElementById('btnShowPanel').addEventListener('click', ()=>{ showPanel(true); showUI(true); });
-    document.getElementById('btnPause').addEventListener('click', ()=>{ togglePause(); bumpUI(); });
-    document.getElementById('btnRestart').addEventListener('click', ()=>{ resetSim(false); showUI(true); showPanel(true); });
-    document.getElementById('btnHide').addEventListener('click', ()=>{ setUIHidden(true); });
-
-    document.getElementById('clearBtn').addEventListener('click', ()=>{
+    document.getElementById('clearBtn').addEventListener('click', (ev)=>{
+      ev.stopPropagation();
       resetSim(true);
       showPanel(true);
       showUI(true);
@@ -552,58 +549,46 @@
       bumpUI();
     });
 
-    startBtnEl.addEventListener('click', async () => {
+    startBtnEl.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
       unlockAudioNow();
       await loadTodayRound();
       resetSim(false);
       beginCountdown();
     });
 
-    // IMPORTANT: unlock audio on *first user gesture* (mobile-safe)
-    const gesture = (ev)=>{
-      if(panelEl.classList.contains('hidden') && !uiHidden){
-        // background tap toggles pause in-game
-      }
+    // unlock audio on first gesture
+    const gesture = ()=>{
       unlockAudioNow();
     };
     document.body.addEventListener('touchstart', gesture, { passive:true });
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
-    // Background tap behavior
+    // background tap
     document.body.addEventListener('click', ()=>{
       if(!panelEl.classList.contains('hidden')) return;
-
       if(uiHidden){
-        showUI(true);
-        bumpUI();
-        return;
+        showUI(true); bumpUI(); return;
       }
-      togglePause();
-      bumpUI();
+      togglePause(); bumpUI();
     }, { passive:true });
-
-    for(const el of document.querySelectorAll('button, label.btn, select')){
-      el.addEventListener('click', (ev)=>ev.stopPropagation());
-      el.addEventListener('touchstart', (ev)=>ev.stopPropagation(), { passive:true });
-      el.addEventListener('pointerdown', (ev)=>ev.stopPropagation(), { passive:true });
-    }
 
     showPanel(true);
     showUI(true);
   }
 
-  function enableStart(on){ startBtnEl.disabled = !on; }
   function showPanel(show){ panelEl.classList.toggle('hidden', !show); }
   function togglePause(){ if(simState !== "setup") paused = !paused; }
 
   function beginCountdown(){
-    stopMusicSoft();
     requestWakeLock();
 
     showPanel(false);
     if(hideTimer) clearTimeout(hideTimer);
     setUIHidden(true);
     paused = false;
+
+    stopMusicSoft(); // will restart when running if not muted
 
     setTimeout(() => {
       simState = "countdown";
@@ -643,7 +628,6 @@
     wakeLock=null;
   }
 
-  // ===== Build roster into bubbles + dots =====
   function resetSim(keepSetupState){
     players=[]; projectiles=[]; particles=[]; frameShake=0;
     extraDots=[]; paused=false; winnerPlayed=false;
@@ -658,7 +642,10 @@
     simState = keepSetupState ? "setup" : simState;
     countdownFrames = 0;
 
-    const finalCount = USE_BACKEND ? Math.max(2, Math.min(100, Number(ROUND_META?.finale_count||rosterHandles.length||50))) : Math.max(2, Number(OFFLINE_COUNT||250));
+    const finalCount = USE_BACKEND
+      ? Math.max(2, Math.min(100, Number(ROUND_META?.finale_count||rosterHandles.length||50)))
+      : Math.max(2, Number(OFFLINE_COUNT||250));
+
     ARENA_START_COUNT = finalCount;
 
     const simCount = Math.min(finalCount, PERF.maxSimBubbles);
@@ -667,20 +654,18 @@
     const A = arenaBounds();
     const margin = 6;
 
-    // Dots (seamless “crowd” behind bubbles)
     for(let i=0;i<dotCount;i++){
-      const z = random(); // depth 0..1
+      const z = random();
       extraDots.push({
         x: random(A.L+margin, A.R-margin),
         y: random(A.T+margin, A.B-margin),
         vx: random(-0.7,0.7),
         vy: random(-0.7,0.7),
         tw: random(999),
-        z,
+        z
       });
     }
 
-    // Bubbles
     for(let i=0;i<simCount;i++){
       const size = getDynamicBubbleSize(simCount);
       const r = random(size.min, size.max);
@@ -710,6 +695,21 @@
     return constrain(x, A.L+estHalf+6, A.R-estHalf-6);
   }
 
+  function cannonOrigins(){
+    const robotX = getRobotX();
+    const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
+
+    const sx = CFG.robotScale;
+    const imgW = (zorbLoaded && zorbImg) ? zorbImg.width*sx : 320*sx;
+    const imgH = (zorbLoaded && zorbImg) ? zorbImg.height*sx : 320*sx;
+
+    const left = robotX - imgW*0.5;
+    const top  = (zorb.y + hoverY) - imgH*0.5;
+
+    const y = top + imgH*CFG.cannonYFrac;
+    return CFG.cannonXFrac.map(fr => ({ x: left + imgW*fr, y }));
+  }
+
   function draw(){
     if(!paused) step();
     render();
@@ -719,7 +719,6 @@
   function step(){
     zorb.recoil *= 0.86;
 
-    // Dot motion: organic fill (noise drift + mild swirl), NOT orbiting circle
     if(extraDots.length){
       const A = arenaBounds();
       const stride = Math.max(1, PERF.dotUpdateStride|0);
@@ -729,13 +728,11 @@
         const d = extraDots[i];
         d.tw += 0.008;
 
-        // gentle noise field
         const n1 = noise(d.x*0.0022, d.y*0.0022, d.tw);
         const n2 = noise(d.y*0.0020, d.x*0.0020, d.tw+50);
         d.vx += (n1-0.5)*0.22;
         d.vy += (n2-0.5)*0.22;
 
-        // mild swirl around center (small enough to avoid orbit look)
         const cx=width*0.5, cy=height*0.58;
         const dx0=cx-d.x, dy0=cy-d.y;
         const inv = 1.0 / (Math.sqrt(dx0*dx0+dy0*dy0) + 220);
@@ -745,7 +742,6 @@
         d.x += d.vx;
         d.y += d.vy;
 
-        // bounds bounce in playable area
         if(d.x < A.L){ d.x=A.L; d.vx*=-1; }
         if(d.x > A.R){ d.x=A.R; d.vx*=-1; }
         if(d.y < A.T){ d.y=A.T; d.vy*=-1; }
@@ -770,7 +766,6 @@
       if(particles[i].dead) particles.splice(i,1);
     }
 
-    // tension bed in finals
     const remaining = totalRemaining();
     tensionTarget = (remaining<=5 && simState==="running") ? 1 : 0;
     tensionVol = lerp(tensionVol, tensionTarget, 0.02);
@@ -783,13 +778,12 @@
       if(countdownFrames<=0){
         simState="running";
         countdownFrames=0;
-        startMusicSoft();
+        if(!musicMuted) startMusicSoft();
       }
       return;
     }
     if(simState!=="running") return;
 
-    // fire pacing
     zorb.fireCooldown -= deltaTime/1000;
     if(zorb.fireCooldown<=0 && remaining>1){
       const rate = arenaFireRate();
@@ -805,7 +799,6 @@
       if(zorb.charge<=0){
         fireShot();
 
-        // thin dots cheaply
         if(extraDots.length){
           const batch = (remaining>2000) ? 10 : (remaining>1000) ? 7 : (remaining>400) ? 4 : 1;
           eliminateExtraDots(batch);
@@ -815,7 +808,6 @@
       }
     }
 
-    // finish: ensure winner is a real bubble
     if(extraDots.length){
       if(players.length===0){
         const d = extraDots.pop();
@@ -832,7 +824,7 @@
         winnerPlayed=true;
         stopMusicSoft();
         playOne(sfxWinner, SFX.winner);
-        setTimeout(()=>startMusicSoft(), 900);
+        setTimeout(()=>{ if(!musicMuted) startMusicSoft(); }, 900);
 
         (async () => {
           try { await reportWinnerToBackend(players[0]); } catch(e){ console.warn(e); }
@@ -844,8 +836,6 @@
 
   function pickTarget(){
     const remaining = totalRemaining();
-
-    // prefer dots when dots dominate
     if(extraDots.length){
       const dotWeight = extraDots.length / Math.max(1, remaining);
       const pDot = constrain(0.35 + dotWeight*0.55, 0.35, 0.90);
@@ -854,27 +844,10 @@
         if(d) return { isDot:true, x:d.x, y:d.y };
       }
     }
-
-    // bubbles
     const avoidWinner = BACKEND_WINNER && players.length>2;
     const pool = avoidWinner ? players.filter(b=>b.handle !== BACKEND_WINNER) : players;
     const b = pool.length ? random(pool) : random(players);
     return { isDot:false, x:b.x, y:b.y, bubble:b };
-  }
-
-  function cannonOrigins(){
-    const robotX = getRobotX();
-    const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
-
-    const sx = CFG.robotScale;
-    const imgW = (zorbLoaded && zorbImg) ? zorbImg.width*sx : 320*sx;
-    const imgH = (zorbLoaded && zorbImg) ? zorbImg.height*sx : 320*sx;
-
-    const left = robotX - imgW*0.5;
-    const top  = (zorb.y + hoverY) - imgH*0.5;
-
-    const y = top + imgH*CFG.cannonYFrac;
-    return CFG.cannonXFrac.map(fr => ({ x: left + imgW*fr, y }));
   }
 
   function fireShot(){
@@ -891,22 +864,24 @@
     playOne(sfxFire, SFX.fire);
     zorb.recoil = 1.0;
 
-    // Shake affects gameplay only; UI overlays stay stable now
-    frameShake = Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8));
+    // NO shake during countdown, capped + small
+    if(simState==="running"){
+      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8)));
+    }
   }
 
   function render(){
     background(CFG.bgColor);
     if (bgImg) image(bgImg, 0, 0, width, height);
-
     if(CFG.vignette) drawVignette();
 
-    // ===== Gameplay layer (shake only here) =====
+    // ===== Gameplay layer (shake only here; reduced) =====
     let sx=0, sy=0;
-    if(frameShake>0 && !paused && simState!=="finished"){
+    if(frameShake>0 && !paused && simState==="running"){
       sx = random(-frameShake, frameShake);
       sy = random(-frameShake, frameShake);
-      frameShake *= 0.86;
+      frameShake *= CFG.shakeDecay;
+      if(frameShake < 0.05) frameShake = 0;
     }
 
     push();
@@ -923,33 +898,46 @@
 
     pop();
 
-    // ===== UI overlays (NO shake) =====
-    // left pulsing glow border (your spec: 24px wide, starts 8px from left)
-    drawLeftGlowBorder();
+    // ===== Overlays (NO shake) =====
+    // UI frame should NEVER crop: draw exact to canvas
+    if(simState!=="finished") drawUIFrameOverlayExact();
 
-    // top banner text boxes (pinned to 1080×1920 pixel positions)
-    // hide them during winnerframe
-    if(simState!=="finished"){
-      drawTopBannerTextBoxes();
-    }
+    // Pulse border around WHOLE frame (not just one side)
+    if(simState!=="finished") drawFullPulsingBorder();
 
-    // ui frame overlay (hide during winnerframe)
-    if(simState!=="finished"){
-      drawUIFrameOverlay();
-    }
+    // Text in top banner boxes MUST be above the ui_frame.png
+    if(simState!=="finished") drawTopBannerTextBoxes();
 
-    drawScanlines();
+    if(CFG.scanlines) drawScanlines();
   }
 
-  function drawUIFrameOverlay(){
+  function drawUIFrameOverlayExact(){
     if(!uiFrameImg) return;
     push();
-    imageMode(CENTER);
-    const iw = uiFrameImg.width || 1;
-    const ih = uiFrameImg.height || 1;
-    const s  = Math.max(width / iw, height / ih) * 1.02;
-    image(uiFrameImg, width/2, height/2, iw*s, ih*s);
+    imageMode(CORNER);
+    image(uiFrameImg, 0, 0, width, height);
     pop();
+  }
+
+  function drawFullPulsingBorder(){
+    // 24px wide border inset 8px, pulsing, around the whole frame
+    const inset = dx(8);
+    const bw = dx(24);
+    const pulse = (sin(frameCount*0.08)*0.5+0.5);
+
+    drawingContext.save();
+    drawingContext.globalCompositeOperation = "screen";
+    noFill();
+
+    strokeWeight(bw);
+    stroke(255,0,200, 60 + pulse*85);
+    rect(inset + bw*0.5, inset + bw*0.5, width - 2*(inset + bw*0.5), height - 2*(inset + bw*0.5), dx(18));
+
+    strokeWeight(Math.max(1, bw*0.45));
+    stroke(160,80,255, 40 + pulse*55);
+    rect(inset + bw*0.5, inset + bw*0.5, width - 2*(inset + bw*0.5), height - 2*(inset + bw*0.5), dx(18));
+
+    drawingContext.restore();
   }
 
   function drawVignette(){
@@ -962,10 +950,8 @@
 
   function drawExtraDots(){
     if(!extraDots.length) return;
-
     const MAX_DRAW = 950;
     const step = Math.max(1, Math.floor(extraDots.length / MAX_DRAW));
-
     noStroke();
     for(let i=0;i<extraDots.length;i+=step){
       const d = extraDots[i];
@@ -977,57 +963,30 @@
     }
   }
 
-  function drawLeftGlowBorder(){
-    // 24px wide border, starts 8px from left, pulsing
-    const x = dx(8);
-    const w = dx(24);
-    const pulse = (sin(frameCount*0.08)*0.5+0.5);
-
-    drawingContext.save();
-    drawingContext.globalCompositeOperation = "screen";
-    noStroke();
-
-    // inner glow bar
-    fill(255,0,200, 30 + pulse*55);
-    rect(x, 0, w, height);
-
-    // soft bloom spill
-    fill(160,80,255, 16 + pulse*28);
-    rect(x - dx(10), 0, w + dx(20), height);
-
-    drawingContext.restore();
-  }
-
-  // ===== Top banner HUD pinned to your exact pixel boxes =====
   function drawTopBannerTextBoxes(){
     const boxW = dw(275);
     const boxH = dh(85);
-
     const leftX = dx(64),  topY = dy(46);
     const rightX= dx(748);
 
-    // (Optional) visualize boxes faintly for debugging: keep alpha near-zero
-    // noStroke(); fill(255,255,255,6); rect(leftX,topY,boxW,boxH,10); rect(rightX,topY,boxW,boxH,10);
-
-    E_drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "left");
-    E_drawTextInBox(`ROUND ${ROUND_META?.round_number || CFG.roundNumber || 1}`, rightX, topY, boxW, boxH, "right");
+    drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "left");
+    drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "right");
   }
 
-  function E_drawTextInBox(str, x, y, w, h, align){
+  function drawTextInBox(str, x, y, w, h, align){
     push();
     textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
     const pad = Math.max(6, w*0.06);
 
-    // clip to the rectangle (so it can never drift outside your transparent areas)
+    // clip to exact box
     drawingContext.save();
     drawingContext.beginPath();
     drawingContext.rect(x, y, w, h);
     drawingContext.clip();
 
-    // glow
     drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(255,0,200,0.45)";
-    fill(255,255,255,230);
+    drawingContext.shadowColor = "rgba(255,0,200,0.55)";
+    fill(255,255,255,235);
     noStroke();
 
     let ts = Math.min(22, h*0.55);
@@ -1040,7 +999,6 @@
     textAlign(align==="right" ? RIGHT : LEFT, CENTER);
     const tx = align==="right" ? (x + w - pad) : (x + pad);
     const ty = y + h/2;
-
     text(str, tx, ty);
 
     drawingContext.restore();
@@ -1048,14 +1006,15 @@
   }
 
   function drawScanlines(){
+    // very subtle so it doesn't degrade IG output
     noStroke();
     for(let y=0; y<height; y+=3){
-      fill(0,0,0,18);
+      fill(0,0,0,14);
       rect(0,y,width,1);
     }
     drawingContext.save();
     drawingContext.globalCompositeOperation = "screen";
-    fill(160, 80, 255, 10);
+    fill(160, 80, 255, 8);
     rect(0,0,width,height);
     drawingContext.restore();
   }
@@ -1070,25 +1029,18 @@
       imageMode(CENTER);
 
       drawingContext.save();
-      drawingContext.filter = "blur(18px)";
+      drawingContext.filter = "blur(16px)";
       tint(255,0,200, zorb.charge>0 ? 170 : 95);
-      image(zorbImg, robotX, zorb.y+hoverY, zorbImg.width*scaleAmt*1.15, zorbImg.height*scaleAmt*1.15);
+      image(zorbImg, robotX, zorb.y+hoverY, zorbImg.width*scaleAmt*1.12, zorbImg.height*scaleAmt*1.12);
       drawingContext.restore();
 
-      tint(255,255,255,235);
+      tint(255,255,255,240);
       image(zorbImg, robotX, zorb.y+hoverY, zorbImg.width*scaleAmt, zorbImg.height*scaleAmt);
-      pop();
-    }else{
-      push();
-      translate(robotX, zorb.y+hoverY);
-      noStroke();
-      fill(80,240,220,210); ellipse(0,0,210,80);
-      fill(255,0,200,55); ellipse(0,0,260,110);
       pop();
     }
 
     for(const o of cannonOrigins()){
-      const glow = zorb.charge>0 ? map(zorb.charge, CFG.chargeTime, 0, 18, 120) : 18;
+      const glow = zorb.charge>0 ? map(zorb.charge, CFG.chargeTime, 0, 18, 110) : 16;
       noStroke(); fill(255,220,0,glow); circle(o.x,o.y,14);
     }
   }
@@ -1101,7 +1053,7 @@
     if(secLeft !== lastCountdownSec){
       lastCountdownSec = secLeft;
       playOne(sfxWoosh, SFX.woosh);
-      frameShake = Math.max(frameShake, 2.2);
+      // NO shake here (keeps FPS stable)
     }
 
     noStroke();
@@ -1109,7 +1061,7 @@
     rect(0,0,width,height);
 
     const phase = (countdownFrames % 60) / 60;
-    const bounce = 1 + 0.25 * pow(1 - phase, 2);
+    const bounce = 1 + 0.20 * pow(1 - phase, 2);
 
     const cx = width*0.5, cy = height*0.50;
     push();
@@ -1118,7 +1070,7 @@
 
     textAlign(CENTER,CENTER);
     drawingContext.save();
-    drawingContext.shadowBlur = 42;
+    drawingContext.shadowBlur = 38;
     drawingContext.shadowColor = "rgba(255, 0, 200, 0.70)";
     fill(255,255,255,255);
     textSize(label === "GO!" ? 96 : (label === "READY?" ? 74 : 86));
@@ -1130,22 +1082,17 @@
   }
 
   function drawWinner(b){
-    // background + winner frame
     background(6,4,12);
     if(bgImg) image(bgImg, 0, 0, width, height);
 
     if(winnerFrameImg){
       push();
-      imageMode(CENTER);
-      const iw = winnerFrameImg.width || 1;
-      const ih = winnerFrameImg.height || 1;
-      const s  = Math.max(width / iw, height / ih) * 1.02;
-      image(winnerFrameImg, width/2, height/2, iw*s, ih*s);
+      imageMode(CORNER);
+      image(winnerFrameImg, 0, 0, width, height);
       pop();
     }
 
     const nameRaw = (b && b.handle) ? ("@" + b.handle) : String(b?.id ?? "WINNER");
-
     const nameX = width * 0.50;
     const nameY = height * 0.44;
     const maxW  = width * 0.78;
@@ -1176,24 +1123,43 @@
     drawingContext.restore();
   }
 
-  function drawBubbleLabel(label, x, y, r, alpha){
-    label = String(label||"");
-    let shown = label;
-    if(shown.length>14) shown = shown.slice(0,13)+"…";
+  function popBubble(b){
+    playRandPop();
+    playOne(sfxBass, SFX.bass);
 
-    let ts = r*0.55;
-    if(shown.length>6) ts = r*0.42;
-    if(shown.length>10) ts = r*0.34;
+    // reduced shake
+    if(simState==="running"){
+      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
+    }
 
-    textAlign(CENTER,CENTER);
-    const a = (alpha==null)?255:alpha;
-    stroke(0,0,0, min(200, a*0.85)); strokeWeight(6);
-    fill(255,255,255, min(255, a)); textSize(ts);
-    text(shown, x, y);
+    for(let i=0;i<CFG.popParticles;i++){
+      const v=p5.Vector.random2D().mult(random(2.0,6.8));
+      v.y += 1.0;
+      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.sparkLife,'spark'));
+    }
+    for(let i=0;i<8;i++){
+      const v=p5.Vector.random2D().mult(random(1.0,5.2));
+      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.popLife,'pop'));
+    }
+  }
 
-    stroke(255,255,255, min(140, a*0.45)); strokeWeight(2);
-    fill(255,255,255, min(255, a));
-    text(shown, x, y);
+  function eliminateExtraDots(batch){
+    if(!extraDots.length) return;
+    const n = Math.min(batch, extraDots.length);
+    for(let k=0;k<n;k++){
+      const idx = int(random(extraDots.length));
+      const d = extraDots[idx];
+      extraDots[idx] = extraDots[extraDots.length-1];
+      extraDots.pop();
+      if(d){
+        if(totalRemaining() <= 600){
+          for(let i=0;i<4;i++){
+            const v=p5.Vector.random2D().mult(random(1.0,3.8));
+            particles.push(new Particle(d.x,d.y,v.x,v.y,12,'spark'));
+          }
+        }
+      }
+    }
   }
 
   class Bubble{
@@ -1224,14 +1190,12 @@
       const targetR = lerp(size.min, size.max, this.rSeed);
       this.r = lerp(this.r, targetR, 0.08);
 
-      // noise-driven wander (organic fill)
       this.noT += 0.010;
       const n1 = noise(this.x*0.0020, this.y*0.0020, this.noT);
       const n2 = noise(this.y*0.0020, this.x*0.0020, this.noT+40);
       this.v.x += (n1-0.5) * CFG.wanderForce;
       this.v.y += (n2-0.5) * CFG.wanderForce;
 
-      // mild swirl (small enough to avoid orbit ring)
       const cx=width*0.5, cy=height*0.58;
       const toC=createVector(cx-this.x, cy-this.y);
       const tangent=createVector(-toC.y, toC.x).normalize()
@@ -1292,7 +1256,13 @@
 
       const label = this.handle ? ("@"+this.handle) : String(this.id);
       const la = labelAlphaForRemaining(players.length, this.r);
-      if(la > 2) drawBubbleLabel(label, 0, 6, this.r, la);
+      if(la > 2){
+        textAlign(CENTER,CENTER);
+        const a = la;
+        stroke(0,0,0, min(200, a*0.85)); strokeWeight(6);
+        fill(255,255,255, min(255, a)); textSize(this.r*0.42);
+        text(label, 0, 6);
+      }
 
       noStroke();
       fill(255,255,255,this.glareA);
@@ -1327,7 +1297,6 @@
           if(BACKEND_WINNER && b.handle === BACKEND_WINNER && players.length>1){
             this.dead=true; break;
           }
-
           popBubble(b);
           players.splice(i,1);
 
@@ -1352,10 +1321,8 @@
 
     draw(){
       noStroke();
-      fill(255,120,0,55); circle(this.x,this.y,this.r*4.4);
-      fill(255,240,120,220); circle(this.x,this.y,this.r*1.8);
-      stroke(255,255,255,70); strokeWeight(3);
-      line(this.x,this.y, this.x - this.v.x*2.0, this.y - this.v.y*2.0);
+      fill(255,120,0,45); circle(this.x,this.y,this.r*4.0);
+      fill(255,240,120,220); circle(this.x,this.y,this.r*1.6);
     }
   }
 
@@ -1384,69 +1351,26 @@
     }
   }
 
-  function popBubble(b){
-    playRandPop();
-    playOne(sfxBass, SFX.bass);
-    frameShake = Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0));
-
-    for(let i=0;i<CFG.popParticles;i++){
-      const v=p5.Vector.random2D().mult(random(2.3,8.0));
-      v.y += 1.0;
-      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.sparkLife,'spark'));
-    }
-    for(let i=0;i<10;i++){
-      const v=p5.Vector.random2D().mult(random(1.2,6.0));
-      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.popLife,'pop'));
-    }
-  }
-
-  function eliminateExtraDots(batch){
-    if(!extraDots.length) return;
-    const n = Math.min(batch, extraDots.length);
-    for(let k=0;k<n;k++){
-      const idx = int(random(extraDots.length));
-      const d = extraDots[idx];
-      extraDots[idx] = extraDots[extraDots.length-1];
-      extraDots.pop();
-      if(d){
-        if(totalRemaining() <= 600){
-          for(let i=0;i<5;i++){
-            const v=p5.Vector.random2D().mult(random(1.2,4.6));
-            particles.push(new Particle(d.x,d.y,v.x,v.y,12,'spark'));
-          }
-        }
-        playRandPop();
-      }
-    }
-  }
-
   async function reportWinnerToBackend(b) {
     const payload = { winner: b.handle || ("#" + b.id), winnerSlot: b.id };
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const res = await fetch(WINNER_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const text = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status} • ${text}`);
-        toastEl.textContent = "Winner saved ✅";
-        toastPulse();
-        return true;
-      } catch (e) {
-        toastEl.textContent = `Winner save failed (try ${attempt})`;
-        toastPulse();
-        await new Promise(r => setTimeout(r, 700 * attempt));
-      }
+    try {
+      await fetch(WINNER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      toastEl.textContent = "Winner saved ✅";
+      toastPulse();
+      return true;
+    } catch (e) {
+      console.warn("Winner POST failed:", e);
+      return false;
     }
-    return false;
   }
 
   function updatePanelStatus(){
     const finalCount = ARENA_START_COUNT || (USE_BACKEND ? (ROUND_META?.finale_count||50) : OFFLINE_COUNT);
     panelRosterEl.textContent = `Roster: ${finalCount} entrants`;
-
     panelZorbEl.textContent = zorbLoaded ? "Zorb: OK" : "Zorb: missing";
     panelZorbEl.classList.toggle('ok', zorbLoaded);
     panelZorbEl.classList.toggle('warn', !zorbLoaded);
@@ -1459,7 +1383,7 @@
     panelBackendEl.classList.toggle('ok', (!USE_BACKEND) || BACKEND_OK);
     panelBackendEl.classList.toggle('bad', USE_BACKEND && !BACKEND_OK);
 
-    enableStart(true);
+    startBtnEl.disabled = false;
   }
 
   function updateHud(){
