@@ -25,7 +25,7 @@
       position:fixed;left:12px;top:12px;z-index:10;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       color:var(--text);font-size:12px;line-height:1.25;
-      :var(--panel);border:1px solid var(--stroke);
+      background:var(--panel);border:1px solid var(--stroke);
       padding:10px 12px;border-radius:12px;backdrop-filter:blur(10px);
       max-width:390px;
     }
@@ -36,7 +36,7 @@
       position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
       z-index:30;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      :var(--panel2);border:1px solid rgba(255,255,255,0.18);
+      background:var(--panel2);border:1px solid rgba(255,255,255,0.18);
       padding:18px 18px 14px;border-radius:16px;color:var(--text);
       width:min(92vw,460px);text-align:center;backdrop-filter:blur(12px);
     }
@@ -45,22 +45,35 @@
     #panel .row{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:10px}
     #panel .note{font-size:11px;opacity:.75;margin-top:10px}
     #panel .status{margin-top:10px;font-size:12px;opacity:.95}
-    #panel .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);:rgba(255,255,255,0.08)}
+    #panel .pill{
+      background:rgba(0,0,0,0.55);
+      border:1px solid rgba(255,255,255,0.14);
+      padding:8px 12px;
+      border-radius:999px;
+      font-weight:800;
+      color:rgba(255,255,255,0.92);
+      text-shadow:0 2px 10px rgba(0,0,0,0.6);
+    }
     #panel .ok{color:var(--good)} #panel .warn{color:var(--warn)} #panel .bad{color:var(--bad)}
 
     #controls{
-      position:fixed;left:50%;bottom:14px;transform:translateX(-50%);
-      z-index:25;display:flex;gap:10px;padding:10px;border-radius:18px;
-      :var(--panel2);border:1px solid rgba(255,255,255,0.16);
-      backdrop-filter:blur(14px);
-      user-select:none;-webkit-user-select:none;touch-action:manipulation;
+      position:absolute;left:12px;right:12px;bottom:12px;
+      padding:12px; border-radius:18px;
+      background:rgba(0,0,0,0.42);
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow:0 0 0 1px rgba(255,0,255,0.10), 0 18px 40px rgba(0,0,0,0.45);
+      backdrop-filter: blur(6px);
     }
     .btn{
-      appearance:none;border:1px solid rgba(255,255,255,0.18);
-      :var(--btn);color:var(--text);
-      padding:10px 12px;border-radius:14px;font-size:13px;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      cursor:pointer;min-width:64px;
+      background:rgba(0,0,0,0.55);
+      color:rgba(255,255,255,0.92);
+      border:1px solid rgba(255,255,255,0.18);
+      border-radius:14px;
+      padding:12px 16px;
+      font-weight:800;
+      letter-spacing:.2px;
+      box-shadow:0 0 0 1px rgba(255,0,255,0.15), 0 8px 24px rgba(0,0,0,0.35);
+      text-shadow:0 2px 10px rgba(0,0,0,0.6);
     }
     .btn:active{transform:translateY(1px);background:var(--btnHover)}
     .btn.small{min-width:52px;padding:10px 10px}
@@ -327,8 +340,8 @@ multiElimChance:0.08,
     
   let zorbImg, zorbLoaded=false;
   // Optional UI image overlays (add these files to the repo root)
-  // - background.PNG : slim 9:16 UI frame overlay (transparent center recommended)
-  // - winnerframe.PNG: winner screen frame with an empty/black name box
+  // - background.png : slim 9:16 UI frame overlay (transparent center recommended)
+  // - winnerframe.png: winner screen frame with an empty/black name box
   let uiFrameImg=null, winnerFrameImg=null;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
@@ -485,30 +498,35 @@ multiElimChance:0.08,
   }
 
   function preload(){
+    // Core sprite
     zorbImg = loadImage('Zorb2.PNG?v=4',
       ()=>{ zorbLoaded=true; },
       ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
     );
-    // Optional overlays (won't break if missing)
-    uiFrameImg = loadImage('background.PNG',
-      ()=>{},
-      ()=>{ uiFrameImg=null; console.warn('background.png not found (UI frame overlay disabled)'); }
-    );
-    winnerFrameImg = loadImage('winnerframe.PNG',
-      ()=>{},
-      ()=>{ winnerFrameImg=null; console.warn('winnerframe.png not found (winner frame disabled)'); }
-    );
-    sfxPop = [ loadSound('pop1.mp3'), loadSound('pop2.mp3'), loadSound('pop3.mp3'), loadSound('pop4.mp3') ];
-    sfxWinner  = loadSound('winner.mp3');
-    sfxReload  = loadSound('reload.mp3');
-    sfxFire    = loadSound('fire.mp3');
-    sfxBass    = loadSound('bass.wav');
-    sfxWoosh   = loadSound('woosh.wav');
-    sfxTension = loadSound('tension.wav');
-    sfxMusic = loadSound('music_loop.mp3');
-  }
 
-  async function setup(){
+    // Background + frame overlays (make sure these files exist in the repo root)
+    // Recommended canonical names (lowercase):
+    //   background.png
+    //   ui_frame.png
+    //   winnerframe.png
+    //
+    // Fallback: also tries uppercase variants so a mismatched filename won’t break the run.
+    bgImg = loadImage('background.png',
+      ()=>{},
+      ()=>{ bgImg = loadImage('BACKGROUND.PNG', ()=>{}, ()=>{ console.warn("Background image missing (background.png)"); }); }
+    );
+
+    uiFrameImg = loadImage('ui_frame.png',
+      ()=>{},
+      ()=>{ uiFrameImg = loadImage('UI_FRAME.PNG', ()=>{}, ()=>{ console.warn("UI frame missing (ui_frame.png)"); }); }
+    );
+
+    winnerFrameImg = loadImage('winnerframe.png',
+      ()=>{},
+      ()=>{ winnerFrameImg = loadImage('WINNERFRAME.PNG', ()=>{}, ()=>{ console.warn("Winner frame missing (winnerframe.png)"); }); }
+    );
+  }
+function setup(){
     createOrResizeCanvas();
     hookUI();
     await loadTodayRound();
