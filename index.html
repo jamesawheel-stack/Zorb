@@ -355,6 +355,7 @@ multiElimChance:0.08,
   // - background.png : slim 9:16 UI frame overlay (transparent center recommended)
   // - winnerframe.png: winner screen frame with an empty/black name box
   let uiFrameImg=null, winnerFrameImg=null;
+  let bgImg = null;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
   let paused=false, frameShake=0;
@@ -515,7 +516,7 @@ multiElimChance:0.08,
     //   background.png
     //   ui_frame.png  (transparent PNG overlay)
     //   winnerframe.png (winner overlay; transparent PNG)
-    zorbImg = loadImage('zorb.png?v=4',
+    zorbImg = loadImage('zorb.png',
       ()=>{ zorbLoaded=true; },
       ()=>{ zorbLoaded=false; console.warn("zorb.png failed to load"); }
     );
@@ -1139,6 +1140,10 @@ spawnConfetti();
     translate(sx, sy);
 
     background(CFG.bgColor);
+    if (bgImg) {
+      imageMode(CORNER);
+      image(bgImg, 0, 0, width, height);
+    }
     drawStars();
     if(CFG.vignette) drawVignette();
     drawArcadeHUD();
