@@ -921,15 +921,22 @@
 
     // IMPORTANT: clip ONLY bubble stuff to bubbleBounds,
     // then draw Zorb un-clipped so he can sit above the ceiling.
-    const B = bubbleBounds();
-    clipRect(B.L, B.T, B.W, B.H);
+    
+    CFG.bubbleClipPadDesign = 24; // 18 halo + a bit extra
+    
+   const B = bubbleBounds();
+const pad = dy(CFG.bubbleClipPadDesign);
+clipRect(B.L, B.T - pad, B.W, B.H + pad);
 
-    drawExtraDots();
-    for(const p of projectiles) p.draw();
-    for(const b of players) b.draw();
-    for(const pt of particles) pt.draw();
+drawExtraDots();
+for(const b of players) b.draw();
+for(const pt of particles) pt.draw();
 
-    unclip();
+unclip();
+
+// 2) draw projectiles un-clipped so shots are never hidden by the ceiling
+for(const p of projectiles) p.draw();
+
 
     // Zorb is NOT clipped (fixes "Zorb disappears")
     drawZorb();
