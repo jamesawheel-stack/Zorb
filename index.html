@@ -1174,22 +1174,21 @@ spawnConfetti();
   }
 
   function drawUIFrameOverlay(){
-    if(!uiFrameImg) return;
-    push();
-    imageMode(CORNER);
-    // If your frame has an opaque center, export a version with a transparent center.
-    image(uiFrameImg, -width*0.02, -height*0.02, width*1.04, height*1.04);
-    pop();
-  }
+  if(!uiFrameImg) return;
 
-  function drawStars(){
-    noStroke();
-    for(const s of stars){
-      const tw = (sin(s.tw)*0.5+0.5);
-      fill(180,200,255, 80 + tw*175);
-      circle(s.x, s.y, s.r);
-    }
-  }
+  push();
+  imageMode(CENTER);
+
+  // "Cover" fit (like CSS background-size: cover)
+  const iw = uiFrameImg.width || 1;
+  const ih = uiFrameImg.height || 1;
+  const s  = Math.max(width / iw, height / ih) * 1.02; // small bleed past edges
+  const w  = iw * s;
+  const h  = ih * s;
+
+  image(uiFrameImg, width/2, height/2, w, h);
+  pop();
+}
 
   function drawVignette(){
     noFill();
@@ -1285,7 +1284,7 @@ function drawExtraDots(){
   // values
   const total = (typeof ARENA_START_COUNT === 'number' && ARENA_START_COUNT>0) ? ARENA_START_COUNT : (ROUND_META?.playerCount || 0);
   const remaining = (typeof totalRemaining === 'function') ? totalRemaining() : 0;
-  const roundNo = (ROUND_META && ROUND_META.roundNumber) ? ROUND_META.roundNumber : 1;
+  const roundNo = (ROUND_META && (ROUND_META.round_number || ROUND_META.roundNumber)) || CFG.roundNumber || 1;
 
   textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
   textSize(18);
@@ -1511,53 +1510,64 @@ function drawFinal5Overlay(){
   }
 
   function drawWinner(b){
-    // Winner screen should feel like a high-score splash.
-    background(6,4,12);
-    drawStarfield(true);
-    if(confettiActive) drawConfetti();
-
-    // Winner frame art (recommended)
-    if(winnerFrameImg){
-      imageMode(CORNER);
-      image(winnerFrameImg, 0, 0, width, height);
-    }
-
-    const winner = players.find(p=>p.id===winId);
-    const name = String(winner?.handle || winner?.id || "WINNER");
-
-    // Center username inside the name box on winnerframe.png
-    const nameX = width * 0.50;
-    const nameY = height * 0.44;
-    const maxW  = width * 0.78;
-
-    textAlign(CENTER, CENTER);
-    textSize(min(64, width*0.10));
-
-    // Fit-to-width if name is long
-    let ts = textSize();
-    while(textWidth(name) > maxW && ts > 22){
-      ts -= 2;
-      textSize(ts);
-    }
-
-    drawingContext.save();
-    drawingContext.shadowBlur = 26;
-    drawingContext.shadowColor = "rgba(255,180,60,0.75)";
-    stroke(0,0,0,220);
-    strokeWeight(10);
-    fill(255);
-    text(name, nameX, nameY);
-    drawingContext.restore();
-
-    // Small CTA
-    textSize(18);
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(160,80,255,0.75)";
-    fill(230, 210, 255, 240);
-    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', width*0.5, height*0.68);
-    drawingContext.restore();
+  // Use your arena background image (no drawStarfield)
+  background(6,4,12);
+  if (bgImg) {
+    imageMode(CORNER);
+    image(bgImg, 0, 0, width, height);
   }
+
+  // Confetti can still run
+  if(confettiActive) drawConfetti();
+
+  // Winner frame art (overlay)
+  if(winnerFrameImg){
+    push();
+    imageMode(CENTER);
+
+    // cover-fit the winner frame too
+    const iw = winnerFrameImg.width || 1;
+    const ih = winnerFrameImg.height || 1;
+    const s  = Math.max(width / iw, height / ih) * 1.02;
+    image(winnerFrameImg, width/2, height/2, iw*s, ih*s);
+    pop();
+  }
+
+  // Use passed-in bubble (b). No winId, no search.
+  const nameRaw = (b && b.handle) ? ("@" + b.handle) : String(b?.id ?? "WINNER");
+
+  // Center username inside the name box on winnerframe.png
+  const nameX = width * 0.50;
+  const nameY = height * 0.44;
+  const maxW  = width * 0.78;
+
+  textAlign(CENTER, CENTER);
+  let ts = min(64, width*0.10);
+  textSize(ts);
+
+  while(textWidth(nameRaw) > maxW && ts > 22){
+    ts -= 2;
+    textSize(ts);
+  }
+
+  drawingContext.save();
+  drawingContext.shadowBlur = 26;
+  drawingContext.shadowColor = "rgba(255,180,60,0.75)";
+  stroke(0,0,0,220);
+  strokeWeight(10);
+  fill(255);
+  text(nameRaw, nameX, nameY);
+  drawingContext.restore();
+
+  // CTA
+  textSize(18);
+  drawingContext.save();
+  drawingContext.shadowBlur = 18;
+  drawingContext.shadowColor = "rgba(160,80,255,0.75)";
+  fill(230, 210, 255, 240);
+  text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', width*0.5, height*0.68);
+  drawingContext.restore();
+}
 
   function drawBubbleLabel(label, x, y, r, alpha){
     label = String(label||"");
