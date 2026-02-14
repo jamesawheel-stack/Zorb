@@ -372,21 +372,33 @@
   }
 
   function playOne(snd, vol){
-    if(!audioUnlocked || !snd) return;
-    try{
-      snd.amp(SFX.master * vol, 0);
-      snd.play();
-    }catch(_){}
+  if(!audioUnlocked || !snd) return;
+  try{
+    // stop() prevents stacking/voice-stealing on rapid triggers
+    if(snd.isPlaying && snd.isPlaying()) snd.stop();
+    snd.amp(SFX.master * vol, 0);
+    snd.play();
+  }catch(_){}
+}
+
+function playRandPop(){
+  if(!audioUnlocked || !sfxPop.length) return;
+  const snd = random(sfxPop);
+  if(!snd) return;
+  try{
+    if(snd.isPlaying && snd.isPlaying()) snd.stop();
+    snd.amp(SFX.master * SFX.pop, 0);
+    snd.play();
+  }catch(_){}
+}
+
+    function ensureAudioAlive(){
+  if(!audioUnlocked) return;
+  const ctx = getAudioContext?.();
+  if(ctx && ctx.state === 'suspended'){
+    ctx.resume();
   }
-  function playRandPop(){
-    if(!audioUnlocked || !sfxPop.length) return;
-    const snd = random(sfxPop);
-    if(!snd) return;
-    try{
-      snd.amp(SFX.master * SFX.pop, 0);
-      snd.play();
-    }catch(_){}
-  }
+}
 
   // ===== Backend roster =====
   async function loadTodayRound(){
@@ -492,6 +504,17 @@
       drawingContext.imageSmoothingQuality = "high";
     }catch(_){}
   }
+    
+function clipRect(x, y, w, h){
+  const ctx = drawingContext;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+}
+function unclip(){
+  drawingContext.restore();
+}
 
   function hookUI(){
     hudEl = document.getElementById('hud');
@@ -711,10 +734,12 @@
   }
 
   function draw(){
+    ensureAudioAlive();
     if(!paused) step();
     render();
     updateHudThrottled(false);
   }
+
 
   function step(){
     zorb.recoil *= 0.86;
@@ -885,18 +910,26 @@
     }
 
     push();
-    translate(sx, sy);
+translate(sx, sy);
 
-    drawExtraDots();
-    for(const p of projectiles) p.draw();
-    for(const b of players) b.draw();
-    drawZorb();
-    for(const pt of particles) pt.draw();
+// CLIP gameplay to inner playable area so bubbles/labels never draw past frame
+const A = arenaBounds();
+clipRect(A.L, A.T, A.W, A.H);
 
-    if(simState==="countdown") drawCountdown();
-    if(simState==="finished" && players.length===1) drawWinner(players[0]);
+drawExtraDots();
+for(const p of projectiles) p.draw();
+for(const b of players) b.draw();
+drawZorb();
+for(const pt of particles) pt.draw();
 
-    pop();
+unclip();
+
+// countdown + winner should NOT be clipped (they’re full-screen overlays)
+if(simState==="countdown") drawCountdown();
+if(simState==="finished" && players.length===1) drawWinner(players[0]);
+
+pop();
+
 
     // ===== Overlays (NO shake) =====
     // UI frame should NEVER crop: draw exact to canvas
@@ -920,25 +953,34 @@
   }
 
   function drawFullPulsingBorder(){
-    // 24px wide border inset 8px, pulsing, around the whole frame
-    const inset = dx(8);
-    const bw = dx(24);
-    const pulse = (sin(frameCount*0.08)*0.5+0.5);
+  // 24px wide border inset 8px, pulsing, around the whole frame
+  const inset = dx(8);
+  const bw = dx(24);
+  const pulse = (sin(frameCount*0.08)*0.5+0.5);
 
-    drawingContext.save();
-    drawingContext.globalCompositeOperation = "screen";
-    noFill();
+  // a touch rounder to match ui_frame.png corners
+  const r = dx(26); // <-- was ~18; tweak 24–30 if needed
 
-    strokeWeight(bw);
-    stroke(255,0,200, 60 + pulse*85);
-    rect(inset + bw*0.5, inset + bw*0.5, width - 2*(inset + bw*0.5), height - 2*(inset + bw*0.5), dx(18));
+  const x = inset + bw*0.5;
+  const y = inset + bw*0.5;
+  const w = width  - 2*(inset + bw*0.5);
+  const h = height - 2*(inset + bw*0.5);
 
-    strokeWeight(Math.max(1, bw*0.45));
-    stroke(160,80,255, 40 + pulse*55);
-    rect(inset + bw*0.5, inset + bw*0.5, width - 2*(inset + bw*0.5), height - 2*(inset + bw*0.5), dx(18));
+  drawingContext.save();
+  drawingContext.globalCompositeOperation = "screen";
+  noFill();
 
-    drawingContext.restore();
-  }
+  strokeWeight(bw);
+  stroke(255,0,200, 60 + pulse*85);
+  rect(x, y, w, h, r);
+
+  strokeWeight(Math.max(1, bw*0.45));
+  stroke(160,80,255, 40 + pulse*55);
+  rect(x, y, w, h, r);
+
+  drawingContext.restore();
+}
+
 
   function drawVignette(){
     noFill();
@@ -1114,13 +1156,47 @@
     text(nameRaw, nameX, nameY);
     drawingContext.restore();
 
-    textSize(18);
-    drawingContext.save();
-    drawingContext.shadowBlur = 18;
-    drawingContext.shadowColor = "rgba(160,80,255,0.75)";
-    fill(230, 210, 255, 240);
-    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', width*0.5, height*0.68);
-    drawingContext.restore();
+    // --- CTA multiline (2–4 lines), centered, outlined for readability ---
+const ctaX = width * 0.50;
+const ctaY = height * 0.68;
+const ctaMaxW = width * 0.78;
+
+const lines = [
+  'Follow @Zorbi',
+  'Comment "IN"',
+  'to enter tomorrow'
+];
+
+let ctaSize = 22;
+textAlign(CENTER, CENTER);
+textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
+textSize(ctaSize);
+
+// shrink if needed to fit max width
+while(lines.some(L => textWidth(L) > ctaMaxW) && ctaSize > 14){
+  ctaSize -= 1;
+  textSize(ctaSize);
+}
+
+const lineH = ctaSize * 1.25;
+const blockH = lineH * lines.length;
+const startY = ctaY - blockH/2 + lineH/2;
+
+drawingContext.save();
+drawingContext.shadowBlur = 10;
+drawingContext.shadowColor = "rgba(160,80,255,0.55)";
+
+// strong black outline
+stroke(0,0,0,235);
+strokeWeight(7);
+fill(255,255,255,245);
+
+for(let i=0;i<lines.length;i++){
+  text(lines[i], ctaX, startY + i*lineH);
+}
+
+drawingContext.restore();
+
   }
 
   function popBubble(b){
