@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <link rel="icon" type="image/png" href="Zorb2.PNG">
-  <title>Zorbi – Mobile Full v6.5</title>
+  <link rel="icon" type="image/png" href="zorb.png">
+  <title>Zorbi – Mobile Full v2</title>
   <style>
     :root{
       --bg:#0B0F1F;
@@ -501,7 +501,7 @@ multiElimChance:0.08,
   }
 
   function preload(){
-    zorbImg = loadImage('zorb.png?v=4',
+    zorbImg = loadImage('zorb.png',
       ()=>{ zorbLoaded=true; },
       ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
     );
@@ -2007,7 +2007,7 @@ function drawBubbleLabel(label, x, y, r, alpha){
 
   
   function updateHud(){
-    const z = zorbLoaded ? "ok" : "MISSING Zorb2.PNG";
+    const z = zorbLoaded ? "ok" : "MISSING zorb.png";
     const a = audioUnlocked ? "unlocked" : "locked";
     const state =
       (simState==="setup") ? "SETUP" :
