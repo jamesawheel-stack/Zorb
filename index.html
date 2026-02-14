@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <link rel="icon" type="image/png" href="zorb.png">
+  <link rel="icon" type="image/png" href="Zorb2.PNG">
   <title>Zorbi – Mobile Full v6.5</title>
   <style>
     :root{
@@ -45,37 +45,26 @@
     #panel .row{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:10px}
     #panel .note{font-size:11px;opacity:.75;margin-top:10px}
     #panel .status{margin-top:10px;font-size:12px;opacity:.95}
-    #panel .pill{
-      background:rgba(0,0,0,0.55);
-      border:1px solid rgba(255,255,255,0.14);
-      padding:8px 12px;
-      border-radius:999px;
-      font-weight:800;
-      color:rgba(255,255,255,0.92);
-      text-shadow:0 2px 10px rgba(0,0,0,0.6);
-    }
+    #panel .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.08)}
     #panel .ok{color:var(--good)} #panel .warn{color:var(--warn)} #panel .bad{color:var(--bad)}
 
     #controls{
-      position:absolute;left:12px;right:12px;bottom:12px;
-      padding:12px; border-radius:18px;
-      background:rgba(0,0,0,0.42);
-      border:1px solid rgba(255,255,255,0.10);
-      box-shadow:0 0 0 1px rgba(255,0,255,0.10), 0 18px 40px rgba(0,0,0,0.45);
-      backdrop-filter: blur(6px);
+      position:fixed;left:50%;bottom:14px;transform:translateX(-50%);
+      z-index:25;display:flex;gap:10px;padding:10px;border-radius:18px;
+      background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.18);
+      backdrop-filter:blur(14px);
+      user-select:none;-webkit-user-select:none;touch-action:manipulation;
     }
     .btn{
-      background:rgba(0,0,0,0.55);
-      color:rgba(255,255,255,0.92);
-      border:1px solid rgba(255,255,255,0.18);
-      border-radius:14px;
-      padding:12px 16px;
-      font-weight:800;
-      letter-spacing:.2px;
-      box-shadow:0 0 0 1px rgba(255,0,255,0.15), 0 8px 24px rgba(0,0,0,0.35);
-      text-shadow:0 2px 10px rgba(0,0,0,0.6);
+      appearance:none;border:1px solid rgba(255,255,255,0.18);
+      background:rgba(0,0,0,0.55);color:#fff;
+      padding:10px 12px;border-radius:14px;font-size:13px;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      cursor:pointer;min-width:64px;
+      text-shadow:0 2px 10px rgba(0,0,0,0.9);
     }
-    .btn:active{transform:translateY(1px);background:var(--btnHover)}
+    .btn:hover{background:rgba(0,0,0,0.70)}
+    .btn:active{transform:translateY(1px);background:rgba(0,0,0,0.78)}
     .btn.small{min-width:52px;padding:10px 10px}
     .btn.wide{min-width:110px}
     .btn.primary{border-color:rgba(120,255,170,0.35);background:rgba(120,255,170,0.12)}
@@ -120,22 +109,7 @@
     select:focus{border-color:rgba(160,80,255,0.65); box-shadow:0 0 0 2px rgba(160,80,255,0.25)}
     option{background:#0B0F1F;color:#fff;}
 
-  
-/* Improve HUD contrast on dark/star backgrounds */
-#hud, #hud * { color: rgba(255,255,255,0.92); }
-#hud button, #hud .chip, #hud input, #hud select {
-  border: 1px solid rgba(255,255,255,0.18);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
-
-  background: rgba(0, 0, 0, 0.72);
-  border: 1px solid rgba(255,255,255,0.22);
-  color: rgba(255,255,255,0.95);
-  box-shadow: 0 0 12px rgba(180, 80, 255, 0.18);
-  backdrop-filter: blur(6px);
-}
-#hud button:hover { background: rgba(20,20,40,0.75); }
-#hud button:active { transform: translateY(1px); }
-</style>
+  </style>
 </head>
 <body>
   <div id="toast">UI shown</div>
@@ -186,7 +160,7 @@
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/addons/p5.sound.min.js"></script>
 
-  <script type="module">
+  <script>
   const BACKEND_BASE =
     (location.hostname === "localhost" || location.hostname === "127.0.0.1")
       ? "http://localhost:10000"
@@ -208,9 +182,6 @@
     baseHeight:1920,
     bgColor:'#0B0F1F',
     vignette:true,
-
-    // Displayed in top HUD (set from backend round meta when available)
-    roundNumber: 2,
 
     playerCount:50,
 
@@ -354,10 +325,6 @@ multiElimChance:0.08,
   };
     
   let zorbImg, zorbLoaded=false;
-  // Optional UI image overlays (add these files to the repo root)
-  // - background.png : slim 9:16 UI frame overlay (transparent center recommended)
-  // - winnerframe.png: winner screen frame with an empty/black name box
-  let uiFrameImg=null, winnerFrameImg=null;
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], stars=[];
   let paused=false, frameShake=0;
@@ -446,15 +413,12 @@ multiElimChance:0.08,
 
       ROUND_META = {
         round_date: new Date().toISOString().slice(0,10),
-        round_number: 2,
         mode: "offline",
         claimed_total: null,
         finale_count: finalCount,
         status: "offline",
         seed: null,
       };
-
-      CFG.roundNumber = ROUND_META.round_number;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent = "Load roster (OFFLINE TEST)";
@@ -484,15 +448,12 @@ multiElimChance:0.08,
       BACKEND_WINNER = round?.winner || null;
       ROUND_META = {
         round_date: round?.round_date || null,
-        round_number: Number(round?.round_number || round?.round || 2) || 2,
         mode: round?.mode || null,
         claimed_total: round?.claimed_total ?? null,
         finale_count: round?.finale_count ?? finalCount,
         status: round?.status || null,
         seed: round?.seed ?? null,
       };
-
-      CFG.roundNumber = ROUND_META.round_number;
 
       document.getElementById("maxCountLabel").textContent = String(CFG.playerCount);
       document.getElementById("panelTitle").textContent =
@@ -513,35 +474,33 @@ multiElimChance:0.08,
   }
 
   function preload(){
-    // Core sprite + overlays (files should exist in repo root)
-    //   zorb.png
-    //   background.png
-    //   ui_frame.png  (transparent PNG overlay)
-    //   winnerframe.png (winner overlay; transparent PNG)
     zorbImg = loadImage('zorb.png?v=4',
       ()=>{ zorbLoaded=true; },
-      ()=>{ zorbLoaded=false; console.warn("zorb.png failed to load"); }
+      ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
     );
-
-    bgImg = loadImage('background.png',
-      ()=>{},
-      ()=>{ console.warn("Missing background.png"); }
-    );
-
-    uiFrameImg = loadImage('ui_frame.png',
-      ()=>{},
-      ()=>{ console.warn("Missing ui_frame.png"); }
-    );
-
-    winnerFrameImg = loadImage('winnerframe.png',
-      ()=>{},
-      ()=>{ console.warn("Missing winnerframe.png"); }
-    );
+    sfxPop = [ loadSound('pop1.mp3'), loadSound('pop2.mp3'), loadSound('pop3.mp3'), loadSound('pop4.mp3') ];
+    sfxWinner  = loadSound('winner.mp3');
+    sfxReload  = loadSound('reload.mp3');
+    sfxFire    = loadSound('fire.mp3');
+    sfxBass    = loadSound('bass.wav');
+    sfxWoosh   = loadSound('woosh.wav');
+    sfxTension = loadSound('tension.wav');
+    sfxMusic = loadSound('music_loop.mp3');
   }
-async function setup(){
+
+  function setup(){
     createOrResizeCanvas();
     hookUI();
-    await loadTodayRound();
+    // p5 won't await an async setup(); run async boot separately.
+    boot();
+  }
+
+  async function boot(){
+    try{
+      await loadTodayRound();
+    }catch(e){
+      console.warn('loadTodayRound failed (continuing offline)', e);
+    }
     resetSim(true);
     updatePanelStatusThrottled(true);
     updateHudThrottled(true);
@@ -1130,27 +1089,7 @@ spawnConfetti();
     frameShake = max(frameShake, CFG.screenShakeShot*(players.length<=5?1.0:0.8));
   }
 
-  
-function drawStarfield() {
-  // Prefer the static star background image (fast + consistent). Fallback to procedural stars.
-  if (bgImg && bgImg.width) {
-    image(bgImg, 0, 0, width, height);
-    return;
-  }
-  background(5, 5, 12);
-  noStroke();
-  // simple twinkle
-  for (let i = 0; i < stars.length; i++) {
-    const s = stars[i];
-    const tw = 0.5 + 0.5 * sin((frameCount * 0.03) + s.phase);
-    const a = 90 + 130 * tw;
-    fill(255, 255, 255, a);
-    circle(s.x * width, s.y * height, s.r);
-  }
-}
-
-
-function render(){
+  function render(){
     let sx=0, sy=0;
     if(frameShake>0 && !paused){
       sx = random(-frameShake, frameShake);
@@ -1185,18 +1124,7 @@ function render(){
 
     if(confettiActive) drawConfetti();
 
-    // UI frame overlay (above gameplay, below scanlines)
-    drawUIFrameOverlay();
     drawScanlines();
-    pop();
-  }
-
-  function drawUIFrameOverlay(){
-    if(!uiFrameImg) return;
-    push();
-    imageMode(CORNER);
-    // If your frame has an opaque center, export a version with a transparent center.
-    image(uiFrameImg, 0, 0, width, height);
     pop();
   }
 
@@ -1529,18 +1457,7 @@ function drawFinal5Overlay(){
     const cx = width*0.5 + dx;
     const cy = height*0.40 + dy;
 
-    // Frame-following glow (replaces the old rounded-edge border that clipped banner text)
-    const pad = 18;
     const ctx = drawingContext;
-    ctx.save();
-    ctx.shadowBlur = 38 + pulse*18;
-    ctx.shadowColor = "rgba(255, 0, 200, 0.55)";
-    noFill();
-    stroke(255, 0, 200, 90);
-    strokeWeight(6);
-    rect(pad, pad, width-pad*2, height-pad*2, 22);
-    ctx.restore();
-
     ctx.save();
     ctx.shadowBlur = 44 + pulse*18;
     ctx.shadowColor = "rgba(255, 0, 200, 0.70)";
@@ -1561,53 +1478,129 @@ function drawFinal5Overlay(){
     ctx.restore();
   }
 
-  
-function drawWinner(b) {
-  // Full-screen winner cabinet frame, plus centered handle in the black name box.
-  if (winnerFrameImg && winnerFrameImg.width) {
-    image(winnerFrameImg, 0, 0, width, height);
+  function drawWinner(b){
+    // Retro “arcade win screen” – clean neon, no cheap gradients
+    const cx = width*0.5, cy = height*0.52;
+    const pulse = sin(frameCount*0.06)*0.5+0.5;
+
+    // Dim + subtle scan glow
+    noStroke();
+    fill(0,0,0,140);
+    rect(0,0,width,height);
+
+    // Center aura
+    const R = min(width,height)*0.22;
+    drawingContext.save();
+    drawingContext.shadowBlur = 48;
+    drawingContext.shadowColor = "rgba(160,80,255,0.55)";
+    fill(160, 80, 255, 34 + pulse*26);
+    circle(cx, cy, R*3.0 + pulse*26);
+    drawingContext.restore();
+
+    // Winner bubble ring
+    drawingContext.save();
+    drawingContext.shadowBlur = 26;
+    drawingContext.shadowColor = "rgba(120,220,255,0.55)";
+    stroke(190,245,255,160);
+    strokeWeight(7);
+    fill(255,255,255,14);
+    circle(cx, cy, R*2.06);
+    drawingContext.restore();
+
+    // Inner shine
+    noStroke();
+    fill(255,255,255,46);
+    ellipse(cx - R*0.26, cy - R*0.30, R*1.05, R*0.70);
+
+    // Handle
+    const label = (b.handle ? "@"+b.handle : ("#"+b.id));
+    let ts = R*0.52;
+    if(label.length > 10) ts = R*0.40;
+    if(label.length > 14) ts = R*0.33;
+
+    textAlign(CENTER,CENTER);
+    textSize(ts);
+
+    // Crisp neon text (outline + glow)
+    drawingContext.save();
+    drawingContext.shadowBlur = 26;
+    drawingContext.shadowColor = "rgba(255,0,200,0.75)";
+    stroke(0,0,0,220);
+    strokeWeight(10);
+    fill(255,255,255,252);
+    text(label, cx, cy+6);
+    drawingContext.restore();
+
+    drawingContext.save();
+    drawingContext.shadowBlur = 18;
+    drawingContext.shadowColor = "rgba(120,220,255,0.80)";
+    stroke(255,255,255,110);
+    strokeWeight(3);
+    fill(255,255,255,255);
+    text(label, cx, cy+6);
+    drawingContext.restore();
+
+    // MARQUEE banner – chunky, arcade-like
+    const by = height*0.16;
+    const bannerW = min(width*0.90, 560);
+    const bannerH = 78;
+
+    // outer frame
+    drawingContext.save();
+    drawingContext.shadowBlur = 34;
+    drawingContext.shadowColor = "rgba(255,0,200,0.55)";
+    noFill();
+    stroke(255,0,200, 160);
+    strokeWeight(10);
+    rectMode(CENTER);
+    rect(cx, by, bannerW, bannerH, 18);
+    drawingContext.restore();
+
+    // inner glow plate
+    const grd = drawingContext.createLinearGradient(cx-bannerW/2, by, cx+bannerW/2, by);
+    grd.addColorStop(0, "rgba(255,0,200,0.35)");
+    grd.addColorStop(0.5, "rgba(160,80,255,0.25)");
+    grd.addColorStop(1, "rgba(120,220,255,0.28)");
+    drawingContext.save();
+    drawingContext.fillStyle = grd;
+    noStroke();
+    rect(cx, by, bannerW-10, bannerH-10, 14);
+    drawingContext.restore();
+
+    // Text
+    textAlign(CENTER, CENTER);
+    textSize(44);
+
+    drawingContext.save();
+    drawingContext.shadowBlur = 32;
+    drawingContext.shadowColor = "rgba(255,0,200,0.85)";
+    stroke(0,0,0,240);
+    strokeWeight(12);
+    fill(255,255,255,255);
+    text("WINNER!", cx, by+2);
+    drawingContext.restore();
+
+    drawingContext.save();
+    drawingContext.shadowBlur = 20;
+    drawingContext.shadowColor = "rgba(120,220,255,0.85)";
+    stroke(255,255,255,120);
+    strokeWeight(3);
+    fill(255,255,255,255);
+    text("WINNER!", cx, by+2);
+    drawingContext.restore();
+
+    // CTA footer (small, clean)
+    textSize(18);
+    drawingContext.save();
+    drawingContext.shadowBlur = 18;
+    drawingContext.shadowColor = "rgba(160,80,255,0.65)";
+    fill(230, 210, 255, 250);
+    text('Follow @Zorbi.ai + comment "IN" to enter tomorrow', cx, height*0.29);
+    drawingContext.restore();
+
+    rectMode(CORNER);
   }
-
-  // Darken the gameplay behind the winner frame (if any residual draw happened)
-  // so the handle is the only focal point.
-  noStroke();
-  fill(0, 0, 0, 90);
-  rect(0, 0, width, height);
-
-  // Re-draw the cabinet frame on top of the dim layer.
-  if (winnerFrameImg && winnerFrameImg.width) {
-    image(winnerFrameImg, 0, 0, width, height);
-  }
-
-  const handle = (b && b.handle) ? b.handle : "@winner";
-  textAlign(CENTER, CENTER);
-  textStyle(BOLD);
-
-  // Name box placement (tuned for the provided winnerframe.png proportions).
-  const boxCx = width * 0.5;
-  const boxCy = height * 0.50;   // center-ish
-  const maxW = width * 0.78;
-
-  // Responsive font size that also shrinks for long handles.
-  let fs = Math.min(92, Math.max(42, width * 0.075));
-  if (handle.length > 14) fs *= 0.86;
-  if (handle.length > 18) fs *= 0.78;
-
-  // Neon-ish white text with glow
-  drawingContext.save();
-  drawingContext.shadowColor = "rgba(255,255,255,0.9)";
-  drawingContext.shadowBlur = 18;
-  fill(255);
-  textSize(fs);
-  text(handle, boxCx, boxCy, maxW);
-  drawingContext.restore();
-
-  // Confetti continues from existing particles (if any)
-  // (particles are updated elsewhere; this just makes sure they're visible)
-}
-
-
-  function drawBubbleLabel(label, x, y, r, alpha){
+function drawBubbleLabel(label, x, y, r, alpha){
     label = String(label||"");
     let shown = label;
     if(shown.length>14) shown = shown.slice(0,13)+"…";
@@ -1987,7 +1980,7 @@ function drawWinner(b) {
 
   
   function updateHud(){
-    const z = zorbLoaded ? "ok" : "MISSING zorb.png";
+    const z = zorbLoaded ? "ok" : "MISSING Zorb2.PNG";
     const a = audioUnlocked ? "unlocked" : "locked";
     const state =
       (simState==="setup") ? "SETUP" :
