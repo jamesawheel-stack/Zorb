@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <link rel="icon" type="image/png" href="Zorb2.PNG">
+  <link rel="icon" type="image/png" href="zorb.png">
   <title>Zorbi – Mobile Full v6.5</title>
   <style>
     :root{
@@ -499,7 +499,7 @@ multiElimChance:0.08,
 
   function preload(){
     // Core sprite
-    zorbImg = loadImage('Zorb2.PNG?v=4',
+    zorbImg = loadImage('zorb.png?v=4',
       ()=>{ zorbLoaded=true; },
       ()=>{ zorbLoaded=false; console.warn("Zorb failed to load"); }
     );
@@ -513,17 +513,17 @@ multiElimChance:0.08,
     // Fallback: also tries uppercase variants so a mismatched filename won’t break the run.
     bgImg = loadImage('background.png',
       ()=>{},
-      ()=>{ bgImg = loadImage('BACKGROUND.PNG', ()=>{}, ()=>{ console.warn("Background image missing (background.png)"); }); }
+      ()=>{ bgImg = loadImage('background.PNG', ()=>{}, ()=>{ console.warn("Background image missing (background.png)"); }); }
     );
 
     uiFrameImg = loadImage('ui_frame.png',
       ()=>{},
-      ()=>{ uiFrameImg = loadImage('UI_FRAME.PNG', ()=>{}, ()=>{ console.warn("UI frame missing (ui_frame.png)"); }); }
+      ()=>{ uiFrameImg = loadImage('ui_frame.PNG', ()=>{}, ()=>{ console.warn("UI frame missing (ui_frame.png)"); }); }
     );
 
     winnerFrameImg = loadImage('winnerframe.png',
       ()=>{},
-      ()=>{ winnerFrameImg = loadImage('WINNERFRAME.PNG', ()=>{}, ()=>{ console.warn("Winner frame missing (winnerframe.png)"); }); }
+      ()=>{ winnerFrameImg = loadImage('winnerframe.PNG', ()=>{}, ()=>{ console.warn("Winner frame missing (winnerframe.png)"); }); }
     );
   }
 function setup(){
@@ -1958,7 +1958,7 @@ function drawFinal5Overlay(){
 
   
   function updateHud(){
-    const z = zorbLoaded ? "ok" : "MISSING Zorb2.PNG";
+    const z = zorbLoaded ? "ok" : "MISSING zorb.png";
     const a = audioUnlocked ? "unlocked" : "locked";
     const state =
       (simState==="setup") ? "SETUP" :
