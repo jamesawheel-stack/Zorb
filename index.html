@@ -239,6 +239,11 @@
     bannerBoxHDesign: 85,
     bannerInsetXDesign: 146,
     bannerTopYDesign: 260, // was 46 (too high); move down into the neon rectangles
+
+    // Winner name placement (winnerframe image pixel coordinates)
+    winnerNameCenterYDesign: 850,   // from top of the 1920px-tall winnerframe image
+    winnerNameMaxWDesign:    550,   // max allowed text width in the 1080px-wide winnerframe image
+    winnerNameCenterXDesign: 540,   // center of a 1080px-wide image
   };
 
   const PERF = {
@@ -1124,12 +1129,14 @@
     }
 
     const nameRaw = (b && b.handle) ? ("@" + b.handle) : String(b?.id ?? "WINNER");
-    const nameX = A.L + A.W * 0.50;
-    const nameY = A.T + A.H * 0.42;
-    const maxW  = A.W * 0.80;
+
+    // Map winnerframe *image pixels* -> the on-screen A-rect
+    const nameX = A.L + (A.W * (CFG.winnerNameCenterXDesign / DESIGN.w));
+    const nameY = A.T + (A.H * (CFG.winnerNameCenterYDesign / DESIGN.h));
+    const maxW  = A.W * (CFG.winnerNameMaxWDesign / DESIGN.w);
 
     textAlign(CENTER, CENTER);
-    let ts = min(62, A.W*0.11);
+    let ts = min(72, maxW * 0.18);
     textSize(ts);
     while(textWidth(nameRaw) > maxW && ts > 22){
       ts -= 2;
