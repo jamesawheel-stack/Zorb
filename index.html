@@ -356,13 +356,31 @@
     if(startCount >= 10) return ["READY?","GO!"];
     return ["GO!"];
   }
-  function getDynamicBubbleSize(count){
-    if(count<=20)  return {min:62,max:86};
-    if(count<=40)  return {min:50,max:72};
-    if(count<=60)  return {min:40,max:58};
-    if(count<=100) return {min:22,max:34};
-    return {min:16,max:22};
+
+    function drawSoftCeilingFade(){
+  const B = bubbleBounds();
+  const fadeH = dy(42); // softness height
+  noStroke();
+  // simple stepped fade (cheap)
+  for(let i=0;i<10;i++){
+    const t = i/9;
+    const a = lerp(0, 180, t);
+    fill(11,15,31,a); // matches your bg vibe
+    rect(B.L, B.T + t*fadeH, B.W, fadeH/10 + 1);
   }
+}
+    
+function getDynamicBubbleSize(count){
+  // smaller endgame so final 20/10/5 don’t feel like beach balls
+  if(count<=5)   return {min:34,max:46};
+  if(count<=10)  return {min:36,max:52};
+  if(count<=20)  return {min:38,max:56};
+  if(count<=40)  return {min:42,max:62};
+  if(count<=60)  return {min:40,max:58};
+  if(count<=100) return {min:22,max:34};
+  return {min:16,max:22};
+}
+
 
   function unlockAudioNow(){
     if(audioUnlocked) return;
@@ -1035,15 +1053,13 @@
     push();
     translate(sx, sy);
 
-    const B = bubbleBounds();
-    clipRect(B.L, B.T, B.W, B.H);
-
     for(const b of players) b.draw();
     for(const pt of particles) pt.draw();
-    unclip();
 
     for(const p of projectiles) p.draw();
 
+    drawSoftCeilingFade();
+    
     drawZorb();
     if(simState==="countdown") drawCountdown();
 
