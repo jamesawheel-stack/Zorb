@@ -455,7 +455,7 @@
 
       BACKEND_OK = true;
       const fc = Number(round?.finale_count || (round?.players?.length || 0) || 0);
-      const finalCount = Math.max(2, Math.min(100, fc || 50));
+      const finalCount = Math.max(2, fc || 50);
 
       let rawHandles = Array.isArray(round?.players)
         ? round.players.map(p => (p.handle || ("#" + p.slot)))
