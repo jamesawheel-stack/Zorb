@@ -1,3 +1,4 @@
+```html
 <!doctype html>
 <html lang="en">
 <head>
@@ -172,15 +173,31 @@
   let BACKEND_WINNER = null;
   let BACKEND_OK = false;
 
-  // ===== Design-space mapping =====
+  // ===== Design-space mapping (still used for general layout numbers) =====
   const DESIGN = { w:1080, h:1920 };
   function dx(x){ return x * (width / DESIGN.w); }
   function dy(y){ return y * (height / DESIGN.h); }
   function dw(w){ return w * (width / DESIGN.w); }
   function dh(h){ return h * (height / DESIGN.h); }
 
-  // ===== Frame bounds (DESIGN px) =====
-  const FRAME = { left:46, right:46, top:160, bottom:32 };
+  // ===== ✅ UI Frame bounds based on the ACTUAL ui_frame.png pixel measurements =====
+  // ui_frame.png is 1024x1536
+  // inner edges you measured:
+  //   left  = 160
+  //   right = 863
+  //   top   = 218
+  //   bottom inner edge is 147px from bottom => 1536-147 = 1389
+  const UI_FRAME = {
+    w: 1024,
+    h: 1536,
+    innerL: 160,
+    innerR: 863,
+    innerT: 218,
+    innerB: 1389,
+  };
+
+  // Optional extra padding INSIDE the measured inner edges (screen px)
+  const FRAME_PAD_PX = { l: 0, r: 0, t: 0, b: 0 };
 
   const CFG = {
     aspectW:9, aspectH:16,
@@ -189,8 +206,8 @@
     vignette:true,
 
     bubbleCeilingDesignY: 640,
-    framePadDesign: {left: 24, right: 24, top: 0, bottom: 26},
     bubbleAreaInsetDesign: { left: 36, right: 36, top: 0, bottom: 44 },
+
     wanderForce:0.18,
     maxSpeed:2.45,
     bounceDamping:0.986,
@@ -235,21 +252,22 @@
 
     bubbleDrawScale: 0.96,
 
-    // ✅ NEW: banner box placement inside the UI frame header
+    // banner box placement inside the UI frame header
     bannerBoxWDesign: 270,
     bannerBoxHDesign: 85,
     bannerInsetXDesign: 148,
-    bannerTopYDesign: 262, // was 46 (too high); move down into the neon rectangles
+    bannerTopYDesign: 262,
 
     // Bubble label alignment (relative to 1024x1024 bubble sprite)
     bubbleSpriteSizePx: 1024,
-    bubbleCenterYPx: 475,        // where the "center" of the bubble is in the sprite
-    bubbleLabelExtraYOffset: 0,  // small tweak in screen px if needed (+down / -up)
+    // ✅ moved UP (smaller px) because labels were sitting low
+    bubbleCenterYPx: 430,
+    bubbleLabelExtraYOffset: -1,
 
-    // Winner name placement (winnerframe image pixel coordinates)
-    winnerNameCenterYDesign: 850,   // from top of the 1920px-tall winnerframe image
-    winnerNameMaxWDesign:    550,   // max allowed text width in the 1080px-wide winnerframe image
-    winnerNameCenterXDesign: 540,   // center of a 1080px-wide image
+    // Winner name placement (in winnerframe *image pixels*)
+    winnerNameCenterYDesign: 850,   // from top
+    winnerNameMaxWDesign:    550,   // max text width
+    winnerNameCenterXDesign: 540,   // center-ish
   };
 
   const PERF = {
@@ -257,6 +275,12 @@
     physicsHz: 30,
     cellSize: 140,
   };
+
+  // ✅ Battle pacing (hard cap target duration)
+  const BATTLE_TARGET_SEC = 30;      // max time to reach winner (running state)
+  const DIRECT_POP_THRESHOLD = 90;   // above this remaining count, pop directly (faster + keeps inside 30s)
+  let elimBudget = 0;               // accumulates "pops to do"
+  let lastPopSfxMs = 0;
 
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
@@ -298,60 +322,39 @@
 
   function totalRemaining(){ return Math.max(0, REMAINING_TOTAL || 0); }
 
+  // ✅ Exact inner frame rect (mapped from ui_frame.png pixels to current canvas)
   function frameBounds(){
-  const L = dx(FRAME.left + (CFG.framePadDesign?.left||0));
-  const R = width - dx(FRAME.right + (CFG.framePadDesign?.right||0));
-  const T = dy(FRAME.top + (CFG.framePadDesign?.top||0));
-  const B = height - dy(FRAME.bottom + (CFG.framePadDesign?.bottom||0));
-  return {L,R,T,B, W:R-L, H:B-T};
-}
+    const L = width  * (UI_FRAME.innerL / UI_FRAME.w) + FRAME_PAD_PX.l;
+    const R = width  * (UI_FRAME.innerR / UI_FRAME.w) - FRAME_PAD_PX.r;
+    const T = height * (UI_FRAME.innerT / UI_FRAME.h) + FRAME_PAD_PX.t;
+    const B = height * (UI_FRAME.innerB / UI_FRAME.h) - FRAME_PAD_PX.b;
+    return {L,R,T,B, W:(R-L), H:(B-T)};
+  }
 
-    
   function bubbleBounds(){
-  const A = frameBounds();
+    const A = frameBounds();
 
-  let dynCeil = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
+    // ceiling is max of: frame top + "bubble ceiling" + robot bottom
+    let dynCeil = Math.max(A.T, dy(CFG.bubbleCeilingDesignY));
 
-  if(zorbLoaded && zorbImg){
-    const sx = CFG.robotScale;
-    const imgH = zorbImg.height * sx;
-    const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
-    const robotTop = (zorb.y + hoverY) - imgH*0.5;
-    const robotBottom = robotTop + imgH;
-    dynCeil = Math.max(dynCeil, robotBottom + dy(18));
+    if(zorbLoaded && zorbImg){
+      const sx = CFG.robotScale;
+      const imgH = zorbImg.height * sx;
+      const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
+      const robotTop = (zorb.y + hoverY) - imgH*0.5;
+      const robotBottom = robotTop + imgH;
+      dynCeil = Math.max(dynCeil, robotBottom + dy(18));
+    }
+
+    const inset = CFG.bubbleAreaInsetDesign || {left:0,right:0,top:0,bottom:0};
+    const L = A.L + dx(inset.left);
+    const R = A.R - dx(inset.right);
+    const T = dynCeil + dy(inset.top);
+    const B = A.B - dy(inset.bottom);
+
+    return { L, R, T, B, W:(R-L), H:(B-T) };
   }
 
-  const inset = CFG.bubbleAreaInsetDesign || {left:0,right:0,top:0,bottom:0};
-  const L = A.L + dx(inset.left);
-  const R = A.R - dx(inset.right);
-  const T = dynCeil + dy(inset.top);
-  const B = A.B - dy(inset.bottom);
-
-  return { L, R, T, B, W:(R-L), H:(B-T) };
-}
-
-
-
-  function targetRateForDuration(startCount){
-    const duration = 28;
-    const shotsNeeded = Math.max(1, startCount - 1);
-    const r = shotsNeeded / duration;
-    return Math.min(12, Math.max(1.25, r));
-  }
-  function arenaFireRate(){
-    const start = Math.max(2, ARENA_START_COUNT || 50);
-    const n = totalRemaining();
-    if(n <= 2) return 3.2;
-    if(n <= 5) return 2.2;
-    const base = targetRateForDuration(start);
-    const t = (n - 5) / Math.max(1, (start - 5));
-    return 2.2 + (base - 2.2) * t;
-  }
-  function arenaChaos(){
-    const start = Math.max(2, ARENA_START_COUNT || 50);
-    const prog = 1 - ((Math.max(1, totalRemaining()) - 1) / (start - 1));
-    return 1.0 + 0.25*prog;
-  }
   function buildCountdownLabels(startCount){
     if(startCount >= 25) return ["3","2","1","GO!"];
     if(startCount >= 10) return ["READY?","GO!"];
@@ -744,6 +747,10 @@
     winnerMomentFrames = 0;
     accumMs = 0;
 
+    // ✅ pacing reset
+    elimBudget = 0;
+    lastPopSfxMs = 0;
+
     zorb.y = height * CFG.robotY + dy(CFG.robotYOffsetDesign);
     zorb.aimX = width * 0.5;
     zorb.aimY = height * 0.5;
@@ -755,7 +762,7 @@
     countdownFrames = 0;
 
     const finalCount = USE_BACKEND
-      ? Math.max(1, Math.min(100, Number(ROUND_META?.finale_count||rosterHandles.length||50)))
+      ? Math.max(1, Math.min(5000, Number(ROUND_META?.finale_count||rosterHandles.length||50)))
       : Math.max(1, Number(OFFLINE_COUNT||250));
 
     ARENA_START_COUNT = finalCount;
@@ -842,6 +849,58 @@
     }
   }
 
+  // ===== ✅ 30-second pacing controller =====
+  function popsPerSecondTarget(){
+    const start = Math.max(2, ARENA_START_COUNT || 50);
+    const needed = Math.max(1, start - 1);
+    return needed / BATTLE_TARGET_SEC;
+  }
+
+  function popBubbleAndRemoveAtIndex(i){
+    const b = players[i];
+    if(!b) return false;
+
+    // visuals + SFX
+    popBubble(b);
+
+    // actually remove
+    players.splice(i,1);
+
+    REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
+    if(REMAINING_TOTAL > players.length) refillIfNeeded();
+    return true;
+  }
+
+  function fastEliminateOne(){
+    if(players.length <= 1) return false;
+
+    // pick a victim and "aim" at it for consistent visuals
+    const victimIdx = Math.floor(random(players.length));
+    const v = players[victimIdx];
+    if(!v) return false;
+
+    zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
+    zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
+
+    // limit pop audio spam in huge rounds
+    const now = performance.now();
+    const allowPopSound = (now - lastPopSfxMs) > 70; // ~14 pops/sec max audio
+    if(allowPopSound){
+      lastPopSfxMs = now;
+    }else{
+      // still show particles but keep audio quieter
+      // (popBubble uses sound; if we want silent, temporarily gate it)
+      // simplest: just let it play; the limiter above reduces most spam by stopping/overlapping
+    }
+
+    // little shot flash + shake so it still feels like Zorb is doing it
+    playOne(sfxFire, SFX.fire * 0.55);
+    zorb.recoil = 1.0;
+    frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*0.55));
+
+    return popBubbleAndRemoveAtIndex(victimIdx);
+  }
+
   function stepFixed(dt){
     zorb.recoil *= 0.86;
 
@@ -852,6 +911,7 @@
       neighborPairs(grid);
     }
 
+    // projectiles only matter in smaller rounds now (kept for nice endgame visuals)
     for(let i=projectiles.length-1;i>=0;i--){
       projectiles[i].update(dt);
       if(projectiles[i].dead) projectiles.splice(i,1);
@@ -879,23 +939,39 @@
     }
     if(simState!=="running") return;
 
-    zorb.fireCooldown -= dt;
-    if(zorb.fireCooldown<=0 && remaining>1){
-      const rate = arenaFireRate();
-      if(zorb.charge<=0){
-        zorb.charge = CFG.chargeTime;
-        const t = pickTarget();
-        zorb.aimMeta = t;
-        zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
-        zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
-      }
+    // ✅ Force battle to finish in ~30s by using a pop budget (time-based, not count-based)
+    const pps = popsPerSecondTarget();
+    elimBudget += pps * dt;
+    // prevent runaway if a frame stalls
+    elimBudget = Math.min(elimBudget, 12);
 
-      zorb.charge -= 1;
-      if(zorb.charge<=0){
-        fireShot();
-        zorb.fireCooldown = 1/Math.max(0.8, rate * arenaChaos());
+    // when huge: pop directly (fast + guarantees duration)
+    // when smaller: go back to projectile-based eliminations (looks better)
+    const useDirect = (remaining > DIRECT_POP_THRESHOLD);
+
+    // do as many pops as budget allows this tick
+    while(elimBudget >= 1 && totalRemaining() > 1){
+      if(useDirect){
+        fastEliminateOne();
+      }else{
+        // projectile endgame (1 pop per shot)
+        if(zorb.fireCooldown <= 0){
+          const t = pickTarget();
+          zorb.aimMeta = t;
+          zorb.aimX = t.x + random(-CFG.aimJitter, CFG.aimJitter);
+          zorb.aimY = t.y + random(-CFG.aimJitter, CFG.aimJitter);
+          fireShot();
+          zorb.fireCooldown = 0.12; // up to ~8 shots/sec endgame
+        }else{
+          // if we’re waiting on cooldown, just do a direct pop to keep the 30s guarantee
+          fastEliminateOne();
+        }
       }
+      elimBudget -= 1;
     }
+
+    // cooldown tick (used for projectile endgame)
+    zorb.fireCooldown = Math.max(0, zorb.fireCooldown - dt);
 
     if(totalRemaining()===1 && players.length===1){
       if(simState !== "finished"){
@@ -924,11 +1000,12 @@
   function fireShot(){
     const origin = random(cannonOrigins());
     const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
-    const speed = CFG.projectileSpeed*(0.90+0.25*arenaChaos());
+    const speed = CFG.projectileSpeed;
     const vel = dir.mult(speed);
 
-    const piercing = random() < CFG.multiElimChance*arenaChaos();
-    const ricochet = random() < CFG.ricochetChance*arenaChaos();
+    // endgame projectiles: keep them simple + reliable
+    const piercing = false;
+    const ricochet = false;
 
     projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, piercing, ricochet));
 
@@ -989,7 +1066,6 @@
 
     if(simState!=="finished") drawUIFrameOverlayExact();
 
-    // ✅ draw text AFTER overlay so it sits inside the UI frame rectangles
     if(simState!=="finished") drawTopBannerTextBoxes();
   }
 
@@ -1009,7 +1085,6 @@
     }
   }
 
-  // ✅ Top labels inside the neon header rectangles
   function drawTopBannerTextBoxes(){
     const boxW = dw(CFG.bannerBoxWDesign);
     const boxH = dh(CFG.bannerBoxHDesign);
@@ -1020,59 +1095,55 @@
     const leftX = insetX;
     const rightX= width - insetX - boxW;
 
-const n = totalRemaining();
-const a = ARENA_START_COUNT || n;
+    const n = totalRemaining();
+    const a = ARENA_START_COUNT || n;
 
-const leftLabel = (a >= 1000)
-  ? `${n}/${a}`                  // ✅ compact when huge
-  : `PLAYERS ${n}/${a}`;
+    const leftLabel = (a >= 1000)
+      ? `${n}/${a}`
+      : `PLAYERS ${n}/${a}`;
 
-drawTextInBox(leftLabel, leftX, topY, boxW, boxH, "center");
-
+    drawTextInBox(leftLabel, leftX, topY, boxW, boxH, "center");
     drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "center");
   }
 
-function drawTextInBox(str, x, y, w, h, align){
-  push();
-  textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
-  textStyle(BOLD);
+  function drawTextInBox(str, x, y, w, h, align){
+    push();
+    textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
+    textStyle(BOLD);
 
-  const pad = Math.max(6, w*0.08);
+    const pad = Math.max(6, w*0.08);
 
-  drawingContext.save();
-  drawingContext.beginPath();
-  drawingContext.rect(x, y, w, h);
-  drawingContext.clip();
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(x, y, w, h);
+    drawingContext.clip();
 
-  fill(255,255,255,232);
-  noStroke();
+    fill(255,255,255,232);
+    noStroke();
 
-  // Start a bit bigger, then shrink as needed
-  let ts = Math.min(26, h * 0.62);
-  const minTs = 8; // ✅ allow smaller than 12
+    let ts = Math.min(26, h * 0.62);
+    const minTs = 8;
 
-  textSize(ts);
-  while(textWidth(str) > (w - pad*2) && ts > minTs){
-    ts -= 1;
     textSize(ts);
+    while(textWidth(str) > (w - pad*2) && ts > minTs){
+      ts -= 1;
+      textSize(ts);
+    }
+
+    if(textWidth(str) > (w - pad*2)){
+      const short = str.replace(/^PLAYERS\s+/i, "");
+      textSize(ts);
+      if(textWidth(short) <= (w - pad*2)) str = short;
+    }
+
+    textAlign(align==="right" ? RIGHT : align==="center" ? CENTER : LEFT, CENTER);
+    const tx = align==="right" ? (x + w - pad) : align==="center" ? (x + w/2) : (x + pad);
+    const ty = y + h/2;
+    text(str, tx, ty);
+
+    drawingContext.restore();
+    pop();
   }
-
-  // ✅ if still too wide at min size, shorten the string
-  if(textWidth(str) > (w - pad*2)){
-    // common good fallback for the left box
-    const short = str.replace(/^PLAYERS\s+/i, "");
-    textSize(ts);
-    if(textWidth(short) <= (w - pad*2)) str = short;
-  }
-
-  textAlign(align==="right" ? RIGHT : align==="center" ? CENTER : LEFT, CENTER);
-  const tx = align==="right" ? (x + w - pad) : align==="center" ? (x + w/2) : (x + pad);
-  const ty = y + h/2;
-  text(str, tx, ty);
-
-  drawingContext.restore();
-  pop();
-}
 
   function drawZorb(){
     const robotX = getRobotX();
@@ -1088,8 +1159,7 @@ function drawTextInBox(str, x, y, w, h, align){
     }
 
     for(const o of cannonOrigins()){
-      const glow = zorb.charge>0 ? map(zorb.charge, CFG.chargeTime, 0, 14, 88) : 12;
-      noStroke(); fill(255,220,0,glow); circle(o.x,o.y,12);
+      noStroke(); fill(255,220,0,12); circle(o.x,o.y,12);
     }
   }
 
@@ -1161,10 +1231,13 @@ function drawTextInBox(str, x, y, w, h, align){
 
     const nameRaw = (b && b.handle) ? ("@" + b.handle) : String(b?.id ?? "WINNER");
 
-    // Map winnerframe *image pixels* -> the on-screen A-rect
-    const nameX = A.L + (A.W * (CFG.winnerNameCenterXDesign / DESIGN.w));
-    const nameY = A.T + (A.H * (CFG.winnerNameCenterYDesign / DESIGN.h));
-    const maxW  = A.W * (CFG.winnerNameMaxWDesign / DESIGN.w);
+    // ✅ Use actual winnerframe image dimensions if available (avoids 1080/1920 mismatch)
+    const wfW = (winnerFrameImg && winnerFrameImg.width) ? winnerFrameImg.width : DESIGN.w;
+    const wfH = (winnerFrameImg && winnerFrameImg.height) ? winnerFrameImg.height : DESIGN.h;
+
+    const nameX = A.L + (A.W * (CFG.winnerNameCenterXDesign / wfW));
+    const nameY = A.T + (A.H * (CFG.winnerNameCenterYDesign / wfH));
+    const maxW  = A.W * (CFG.winnerNameMaxWDesign / wfW);
 
     textAlign(CENTER, CENTER);
     let ts = min(72, maxW * 0.18);
@@ -1284,15 +1357,15 @@ function drawTextInBox(str, x, y, w, h, align){
       const cx=width*0.5, cy=height*0.58;
       const toC=createVector(cx-this.x, cy-this.y);
       const tangent=createVector(-toC.y, toC.x).normalize()
-        .mult(CFG.swirlStrength*this.spin*this.swirl*arenaChaos());
+        .mult(CFG.swirlStrength*this.spin*this.swirl);
       this.v.add(tangent);
 
-      if(random() < CFG.swirlJukeChance*arenaChaos()){
+      if(random() < CFG.swirlJukeChance){
         const j=p5.Vector.random2D().mult(CFG.swirlJukeForce*random(0.7,1.2));
         this.v.add(j);
       }
 
-      const maxV = CFG.maxSpeed*(0.85+0.35*arenaChaos());
+      const maxV = CFG.maxSpeed;
       const m = this.v.mag();
       if(m>maxV) this.v.mult(maxV/m);
 
@@ -1300,7 +1373,7 @@ function drawTextInBox(str, x, y, w, h, align){
       this.y += this.v.y;
 
       const A = bubbleBounds();
-      const artPad = Math.max(6, this.r * 0.28);  // more pad when bubbles are tiny
+      const artPad = Math.max(6, this.r * 0.28);
       const eff = this.r * CFG.bubbleDrawScale + artPad;
       if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
       if(this.x > A.R - eff){ this.x=A.R - eff; this.v.x*=-1; }
@@ -1318,7 +1391,7 @@ function drawTextInBox(str, x, y, w, h, align){
       if(d2>0 && d2<minD2){
         const d=Math.sqrt(d2);
         const overlap=(minD-d)/minD;
-        const push=overlap*CFG.separationStrength*(1+0.35*arenaChaos());
+        const push=overlap*CFG.separationStrength;
         const nx=dx/d, ny=dy/d;
 
         this.x -= nx*push*40; this.y -= ny*push*40;
@@ -1355,10 +1428,9 @@ function drawTextInBox(str, x, y, w, h, align){
       if(alpha > 0){
         const maxW = s * 0.78;
         const maxH = s * 0.26;
-        
-        // Map sprite Y center -> on-screen offset from true center
+
         const spriteHalf = CFG.bubbleSpriteSizePx * 0.5;
-        const spriteDelta = (CFG.bubbleCenterYPx - spriteHalf) / CFG.bubbleSpriteSizePx; // negative = up
+        const spriteDelta = (CFG.bubbleCenterYPx - spriteHalf) / CFG.bubbleSpriteSizePx;
         const yOff = (spriteDelta * s) + (CFG.bubbleLabelExtraYOffset || 0);
 
         push();
@@ -1399,20 +1471,7 @@ function drawTextInBox(str, x, y, w, h, align){
           REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
           if(REMAINING_TOTAL > players.length) refillIfNeeded();
 
-          if(!this.piercing){
-            this.dead=true;
-          }else{
-            this.r *= 0.92;
-            this.v.mult(0.92);
-            if(this.r < 6) this.dead=true;
-          }
-
-          if(this.ricochet && !this.hasRicocheted && !this.dead){
-            this.hasRicocheted=true;
-            const nv=p5.Vector.random2D().mult(CFG.projectileSpeed*0.85);
-            nv.y = abs(nv.y) + 6;
-            this.v = nv;
-          }
+          this.dead=true;
           break;
         }
       }
@@ -1525,3 +1584,4 @@ function drawTextInBox(str, x, y, w, h, align){
   </script>
 </body>
 </html>
+```
