@@ -179,8 +179,16 @@
   function dw(w){ return w * (width / DESIGN.w); }
   function dh(h){ return h * (height / DESIGN.h); }
 
-  // ===== Frame/Playable bounds in DESIGN pixels (your measurements) =====
+  // ===== Frame/Playable bounds in DESIGN pixels =====
+  // These are the "inner safe" bounds for IG cropping + your UI frame artwork.
+  // Keep these conservative to prevent glow/sprites from visually clipping into the frame edges.
   const FRAME = { left:46, right:46, top:160, bottom:32 };
+
+  // Extra padding for sprites/glow so nothing looks like it spills outside the frame.
+  const SAFE_PAD = { side: 26, bottom: 18, topExtra: 0 }; // in DESIGN px
+
+  // Top overlay safe area (notch/headroom)
+  const SAFE_TOP_TEXT = 64; // in DESIGN px (moves PLAYERS/ROUND down from iPhone camera area)
 
   const CFG = {
     aspectW:9, aspectH:16,
@@ -189,7 +197,7 @@
     vignette:true,
 
     // bubble ceiling so they don't sit behind Zorbi
-    bubbleCeilingDesignY: 640, // <-- tweak: increase to push bubbles lower
+    bubbleCeilingDesignY: 660, // increase to push bubbles lower under the header
 
     // Motion
     wanderForce:0.18,
@@ -200,9 +208,9 @@
     swirlJukeChance:0.010,
     swirlJukeForce:1.35,
 
-    // Zorbi size
+    // Zorbi placement/size
     robotScale:0.18,
-    robotY:0.20,
+    robotY:0.245,             // LOWER Zorbi (was 0.20)
     robotHoverAmpY:9,
     robotHoverSpeedY:0.028,
     robotSwayFracX:0.08,
@@ -235,6 +243,9 @@
     showNamesFinalN: 15,     // only render names when remaining <= this
     showGlowFinalN:  10,     // only render glow when remaining <= this
     showGlowFinalN2: 5,      // stronger glow at <= this
+
+    // Glow alignment safety
+    glowScale: 1.34,         // visual glow size relative to bubble
   };
 
   // Performance limits
@@ -242,7 +253,7 @@
     maxSimBubbles: 160,
     dotUpdateStride: 2,
     physicsHz: 30,
-    cellSize: 140, // spatial hash cell size in px (tuned for typical bubble radii)
+    cellSize: 140,
   };
 
   // ===== Assets =====
@@ -251,7 +262,10 @@
   let bubbleImg=null, glowImg=null;
   let spritesOk=false;
 
-  // Audio filenames matched to your repo
+  // Auto-correct glow scale if the source PNGs are different intrinsic sizes
+  let glowSizeFix = 1.0;
+
+  // Audio
   let audioUnlocked=false;
   let musicMuted=false;
   let sfxPop=[], sfxWinner=null, sfxReload=null, sfxFire=null, sfxBass=null, sfxWoosh=null, sfxTension=null, sfxMusic=null;
@@ -274,8 +288,8 @@
   let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0, aimMeta:null };
 
   // Winner phases
-  let winnerMomentFrames = 0; // short freeze+pop in-arena before card
-  const WINNER_MOMENT_LEN = 54; // ~0.9s at 60fps render
+  let winnerMomentFrames = 0;
+  const WINNER_MOMENT_LEN = 54;
 
   // HUD elements
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl;
@@ -290,19 +304,22 @@
 
   function totalRemaining(){ return players.length + extraDots.length; }
 
-  // ===== Bounds separation =====
+  // ===== Bounds helpers =====
   function frameBounds(){
+    // inner rect where the frame lives (no glow)
     const L = dx(FRAME.left);
     const R = width - dx(FRAME.right);
     const T = dy(FRAME.top);
     const B = height - dy(FRAME.bottom);
     return {L,R,T,B, W:R-L, H:B-T};
   }
+
   function bubbleBounds(){
-    const L = dx(FRAME.left);
-    const R = width - dx(FRAME.right);
-    const T = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
-    const B = height - dy(FRAME.bottom);
+    // tighter bounds for bubbles so sprite edges + glow don't visually clip past the frame
+    const L = dx(FRAME.left + SAFE_PAD.side);
+    const R = width - dx(FRAME.right + SAFE_PAD.side);
+    const T = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY) + SAFE_PAD.topExtra);
+    const B = height - dy(FRAME.bottom + SAFE_PAD.bottom);
     return {L,R,T,B, W:R-L, H:B-T};
   }
 
@@ -426,7 +443,6 @@
   function isDisallowedHandle(h){
     const s = normalizeHandle(h);
     if(!s) return true;
-    // Never allow the account itself to enter/win
     if(s.toLowerCase() === "zorbi.ai") return true;
     return false;
   }
@@ -437,7 +453,6 @@
       BACKEND_WINNER = null;
       const finalCount = Math.max(2, Math.min(5000, Number(OFFLINE_COUNT||250)));
       rosterHandles = Array.from({length: finalCount}, (_,i)=> ("player"+(i+1)));
-      // offline: also prevent "zorbi.ai" (not present anyway)
       rosterHandles = rosterHandles.filter(h => !isDisallowedHandle(h));
       ROUND_META = { round_date: new Date().toISOString().slice(0,10), round_number:2, mode:"offline", finale_count:finalCount };
       document.getElementById("maxCountLabel").textContent = String(finalCount);
@@ -462,13 +477,11 @@
         ? round.players.map(p => (p.handle || ("#" + p.slot)))
         : [];
 
-      // sanitize + drop disallowed (zorbi.ai, blanks, etc.)
       rawHandles = rawHandles.map(normalizeHandle).filter(h => h && !isDisallowedHandle(h));
 
-      // Ensure at least 2 entrants for the sim (but still "real entrants only" - if not, you can leave it as 1 and use sudden death later)
       rosterHandles = rawHandles;
       if(rosterHandles.length < 2){
-        rosterHandles = rawHandles; // keep as-is; sim handles it
+        rosterHandles = rawHandles;
       }
 
       BACKEND_WINNER = normalizeHandle(round?.winner || null);
@@ -502,7 +515,6 @@
     uiFrameImg = loadImage('ui_frame.png', ()=>{}, ()=>{ console.warn("Missing ui_frame.png"); });
     winnerFrameImg = loadImage('winnerframe.png', ()=>{}, ()=>{ console.warn("Missing winnerframe.png"); });
 
-    // NEW: sprite assets
     bubbleImg = loadImage('bubble.png', ()=>{}, ()=>{ console.warn("Missing bubble.png"); });
     glowImg   = loadImage('bubbleglow.png', ()=>{}, ()=>{ console.warn("Missing bubbleglow.png"); });
 
@@ -527,6 +539,13 @@
     hookUI();
     await loadTodayRound();
     resetSim(true);
+
+    // glow size correction if intrinsic png sizes differ
+    if(bubbleImg && glowImg && bubbleImg.width && glowImg.width){
+      glowSizeFix = bubbleImg.width / glowImg.width;
+      if(!isFinite(glowSizeFix) || glowSizeFix<=0) glowSizeFix = 1.0;
+    }
+
     updatePanelStatusThrottled(true);
     updateHudThrottled(true);
   }
@@ -539,14 +558,12 @@
     const w = Math.min(windowWidth, targetW);
     const h = w * (CFG.aspectH/CFG.aspectW);
 
-    // p5: if canvas exists use resizeCanvas
     if(window._renderer && window._renderer.canvas){
       resizeCanvas(Math.floor(w), Math.floor(h));
     }else{
       createCanvas(Math.floor(w), Math.floor(h));
     }
 
-    // DPR cap (big performance win on iPhone Pro)
     const dpr = window.devicePixelRatio || 2;
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const pd = isIOS ? Math.min(1.75, dpr) : Math.min(2, dpr);
@@ -558,7 +575,7 @@
     }catch(_){}
   }
 
-  // ---- robust clip helpers (paired save/restore) ----
+  // ---- robust clip helpers ----
   function clipRect(x, y, w, h){
     const ctx = drawingContext;
     ctx.save();
@@ -632,12 +649,10 @@
       beginCountdown();
     });
 
-    // unlock audio on first gesture
     const gesture = ()=>{ unlockAudioNow(); };
     document.body.addEventListener('touchstart', gesture, { passive:true });
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
-    // background tap
     document.body.addEventListener('click', ()=>{
       if(!panelEl.classList.contains('hidden')) return;
       if(uiHidden){
@@ -661,7 +676,7 @@
     setUIHidden(true);
     paused = false;
 
-    stopMusicSoft(); // will restart when running if not muted
+    stopMusicSoft();
 
     setTimeout(() => {
       simState = "countdown";
@@ -726,7 +741,6 @@
     const simCount = Math.min(finalCount, PERF.maxSimBubbles);
     const dotCount = Math.max(0, finalCount - simCount);
 
-    // IMPORTANT: spawn in bubbleBounds (uses ceiling)
     const A = bubbleBounds();
     const margin = 6;
 
@@ -745,6 +759,7 @@
     for(let i=0;i<simCount;i++){
       const size = getDynamicBubbleSize(simCount);
       const r = random(size.min, size.max);
+
       let x = width*0.5, y=height*0.6;
       for(let attempt=0; attempt<160; attempt++){
         x = random(A.L+r, A.R-r);
@@ -790,12 +805,11 @@
   function draw(){
     ensureAudioAlive();
 
-    // Fixed-timestep physics (smooth + predictable + lighter)
     if(!paused){
-      const dt = Math.min(50, deltaTime || 16); // clamp big stalls
+      const dt = Math.min(50, deltaTime || 16);
       accumMs += dt;
       let steps = 0;
-      while(accumMs >= FIXED_DT_MS && steps < 4){ // cap to avoid spiral
+      while(accumMs >= FIXED_DT_MS && steps < 4){
         stepFixed(FIXED_DT_MS/1000);
         accumMs -= FIXED_DT_MS;
         steps++;
@@ -818,12 +832,11 @@
       let arr = grid.get(key);
       if(!arr){ arr=[]; grid.set(key, arr); }
       arr.push(i);
-      b._cx = cx; b._cy = cy; // cache
+      b._cx = cx; b._cy = cy;
     }
     return grid;
   }
   function neighborPairs(grid){
-    const cs = PERF.cellSize;
     for(let i=0;i<players.length;i++){
       const a = players[i];
       for(let oy=-1; oy<=1; oy++){
@@ -844,7 +857,6 @@
   function stepFixed(dt){
     zorb.recoil *= 0.86;
 
-    // extraDots step (throttled)
     if(extraDots.length){
       const A = bubbleBounds();
       const stride = Math.max(1, PERF.dotUpdateStride|0);
@@ -878,16 +890,13 @@
       }
     }
 
-    // bubbles update
     for(const b of players) b.update();
 
-    // collisions via spatial hash (big CPU win)
     if(players.length > 1){
       const grid = buildGrid();
       neighborPairs(grid);
     }
 
-    // projectiles & particles
     for(let i=projectiles.length-1;i>=0;i--){
       projectiles[i].update(dt);
       if(projectiles[i].dead) projectiles.splice(i,1);
@@ -950,7 +959,6 @@
     }
 
     if(players.length===1){
-      // enter winner moment first
       if(simState !== "finished"){
         simState="finished";
         winnerMomentFrames = WINNER_MOMENT_LEN;
@@ -979,7 +987,6 @@
         if(d) return { isDot:true, x:d.x, y:d.y };
       }
     }
-    // "avoid winner bubble" logic removed from visible gameplay fairness; backend winner is used only for display
     const b = players.length ? random(players) : null;
     return b ? { isDot:false, x:b.x, y:b.y, bubble:b } : { isDot:true, x:width*0.5, y:height*0.6 };
   }
@@ -1008,7 +1015,6 @@
     if (bgImg) image(bgImg, 0, 0, width, height);
     if(CFG.vignette) drawVignette();
 
-    // ===== Gameplay layer (shake only here) =====
     let sx=0, sy=0;
     if(frameShake>0 && !paused && simState==="running"){
       sx = random(-frameShake, frameShake);
@@ -1020,25 +1026,21 @@
     push();
     translate(sx, sy);
 
-    // clip bubble stuff to bubbleBounds
     const B = bubbleBounds();
     const pad = dy(24);
     clipRect(B.L, B.T - pad, B.W, B.H + pad);
 
     drawExtraDots();
-    for(const b of players) b.draw();      // sprite bubbles
-    for(const pt of particles) pt.draw();  // lightweight
+    for(const b of players) b.draw();
+    for(const pt of particles) pt.draw();
     unclip();
 
-    // projectiles un-clipped
     for(const p of projectiles) p.draw();
 
-    // Zorb un-clipped
     drawZorb();
 
     if(simState==="countdown") drawCountdown();
 
-    // Winner moment (in-arena) then card
     if(simState==="finished" && players.length===1){
       if(winnerMomentFrames > 0){
         drawWinnerMoment(players[0]);
@@ -1050,7 +1052,6 @@
 
     pop();
 
-    // ===== Overlays (NO shake) =====
     if(simState!=="finished") drawUIFrameOverlayExact();
     if(simState!=="finished") drawTopBannerTextBoxes();
   }
@@ -1086,12 +1087,16 @@
     }
   }
 
-  // Top labels: keep simple (no shadowBlur)
+  // Top labels: now anchored to a notch-safe Y, and pinned left/right within design-safe margins.
   function drawTopBannerTextBoxes(){
     const boxW = dw(275);
     const boxH = dh(85);
-    const leftX = dx(64),  topY = dy(46);
-    const rightX= dx(748);
+
+    const topY = dy(SAFE_TOP_TEXT);
+    const marginX = dx(64);
+
+    const leftX = marginX;
+    const rightX = width - marginX - boxW;
 
     drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "left");
     drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "right");
@@ -1102,7 +1107,6 @@
     textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
     const pad = Math.max(6, w*0.06);
 
-    // clipped to box
     drawingContext.save();
     drawingContext.beginPath();
     drawingContext.rect(x, y, w, h);
@@ -1135,13 +1139,11 @@
     if(zorbLoaded && zorbImg){
       push();
       imageMode(CENTER);
-      // removed expensive blur filter; rely on sprite art
       tint(255,255,255,245);
       image(zorbImg, robotX, zorb.y+hoverY, zorbImg.width*scaleAmt, zorbImg.height*scaleAmt);
       pop();
     }
 
-    // tiny charge dots
     for(const o of cannonOrigins()){
       const glow = zorb.charge>0 ? map(zorb.charge, CFG.chargeTime, 0, 14, 88) : 12;
       noStroke(); fill(255,220,0,glow); circle(o.x,o.y,12);
@@ -1180,19 +1182,17 @@
   }
 
   function drawWinnerMoment(b){
-    // tiny “pop” emphasis (cheap)
     const t = (WINNER_MOMENT_LEN - winnerMomentFrames) / WINNER_MOMENT_LEN;
-    const pop = 1 + 0.10 * Math.sin(Math.min(1, t) * Math.PI);
+    const popScale = 1 + 0.10 * Math.sin(Math.min(1, t) * Math.PI);
 
-    // draw winner glow + bubble on top (names already handled by bubble draw rules)
     push();
     translate(b.x, b.y);
-    const s = (b.r*2) * pop;
+    const s = (b.r*2) * popScale;
 
     if(glowImg){
       imageMode(CENTER);
       tint(255,255,255, 190);
-      image(glowImg, 0, 0, s*1.34, s*1.34);
+      image(glowImg, 0, 0, s*CFG.glowScale*glowSizeFix, s*CFG.glowScale*glowSizeFix);
       noTint();
     }
     if(bubbleImg){
@@ -1272,7 +1272,6 @@
       frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
     }
 
-    // fewer particles (cheaper)
     for(let i=0;i<CFG.popParticles;i++){
       const v=p5.Vector.random2D().mult(random(2.0,6.2));
       v.y += 0.9;
@@ -1303,7 +1302,7 @@
     }
   }
 
-  // ===== Name sprite cache (massive win vs fillText each frame) =====
+  // ===== Name sprite cache =====
   const NAME_CACHE = new Map();
   function getNameSprite(label){
     if(!label) return null;
@@ -1311,7 +1310,6 @@
     let spr = NAME_CACHE.get(key);
     if(spr) return spr;
 
-    // Create small offscreen graphics once
     const g = createGraphics(512, 128);
     g.pixelDensity(1);
     g.clear();
@@ -1319,7 +1317,6 @@
     g.textAlign(CENTER, CENTER);
     g.textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
 
-    // auto-size to fit
     let ts = 64;
     g.textSize(ts);
     while(g.textWidth(label) > 480 && ts > 18){
@@ -1327,7 +1324,6 @@
       g.textSize(ts);
     }
 
-    // outlined text (cheap once)
     g.stroke(0,0,0,235);
     g.strokeWeight(12);
     g.fill(255,255,255,250);
@@ -1354,7 +1350,6 @@
 
       this.noT = random(999);
 
-      // cached name sprite
       const lbl = this.handle ? ("@"+this.handle) : ("#"+this.id);
       this.label = lbl;
       this.nameSpr = getNameSprite(lbl);
@@ -1389,11 +1384,13 @@
       this.x += this.v.x;
       this.y += this.v.y;
 
+      // Keep entire bubble+glow inside bounds.
       const A = bubbleBounds();
-      if(this.x < A.L + this.r){ this.x=A.L + this.r; this.v.x*=-1; }
-      if(this.x > A.R - this.r){ this.x=A.R - this.r; this.v.x*=-1; }
-      if(this.y < A.T + this.r){ this.y=A.T + this.r; this.v.y*=-1; }
-      if(this.y > A.B - this.r){ this.y=A.B - this.r; this.v.y*=-1; }
+      const effR = this.r * CFG.glowScale; // conservative even if glow hidden (prevents edge spills)
+      if(this.x < A.L + effR){ this.x=A.L + effR; this.v.x*=-1; }
+      if(this.x > A.R - effR){ this.x=A.R - effR; this.v.x*=-1; }
+      if(this.y < A.T + effR){ this.y=A.T + effR; this.v.y*=-1; }
+      if(this.y > A.B - effR){ this.y=A.B - effR; this.v.y*=-1; }
 
       this.v.mult(CFG.bounceDamping);
       this.wob += this.wobSp;
@@ -1419,8 +1416,7 @@
     }
 
     draw(){
-      // sprite bubble + optional glow
-      const remaining = players.length; // only sim bubbles
+      const remaining = players.length;
       const showGlow = (remaining <= CFG.showGlowFinalN);
       const strongGlow = (remaining <= CFG.showGlowFinalN2);
       const showName = (remaining <= CFG.showNamesFinalN);
@@ -1433,14 +1429,13 @@
       if(showGlow && glowImg){
         const a = strongGlow ? 220 : 170;
         tint(255,255,255,a);
-        image(glowImg, 0, 0, s*1.34, s*1.34);
+        image(glowImg, 0, 0, s*CFG.glowScale*glowSizeFix, s*CFG.glowScale*glowSizeFix);
         noTint();
       }
 
       if(bubbleImg){
         image(bubbleImg, 0, 0, s, s);
       }else{
-        // fallback if missing sprite
         noStroke();
         fill(255,255,255,18);
         circle(0,0,s);
@@ -1448,12 +1443,21 @@
 
       if(showName && this.nameSpr){
         const ns = this.nameSpr;
-        // scale name to bubble size, clamped
-        const targetW = Math.min(s*2.3, width*0.8);
+
+        // Keep text INSIDE bubble: target ~90% of bubble width, and clip to circle.
+        const targetW = Math.max(90, s * 0.90);
         const scale = targetW / ns.w;
         const drawW = ns.w * scale;
         const drawH = ns.h * scale;
-        image(ns.g, 0, s*0.08, drawW, drawH);
+
+        drawingContext.save();
+        drawingContext.beginPath();
+        drawingContext.arc(0, 0, this.r*0.92, 0, Math.PI*2);
+        drawingContext.clip();
+
+        image(ns.g, 0, 0, drawW, drawH);
+
+        drawingContext.restore();
       }
 
       pop();
@@ -1570,7 +1574,10 @@
     panelBackendEl.classList.toggle('bad', USE_BACKEND && !BACKEND_OK);
 
     spritesOk = !!(bubbleImg && glowImg);
-    panelSpritesEl.textContent = spritesOk ? "Sprites: OK" : "Sprites: missing";
+    const sizeNote = (bubbleImg && glowImg && bubbleImg.width && glowImg.width && bubbleImg.width !== glowImg.width)
+      ? ` (size-fix ${glowSizeFix.toFixed(3)}×)`
+      : "";
+    panelSpritesEl.textContent = spritesOk ? ("Sprites: OK" + sizeNote) : "Sprites: missing";
     panelSpritesEl.classList.toggle('ok', spritesOk);
     panelSpritesEl.classList.toggle('warn', !spritesOk);
 
