@@ -357,26 +357,30 @@
     return ["GO!"];
   }
 
-    function drawSoftCeilingFade(){
+function drawSoftCeilingFade(){
   const B = bubbleBounds();
-  const y0 = Math.floor(B.T);
-  const fadeH = Math.floor(dy(70)); // try 55–90
 
   const ctx = drawingContext;
   ctx.save();
 
-  // One smooth gradient = no stripes
-  const g = ctx.createLinearGradient(0, y0, 0, y0 + fadeH);
-  // Top is more opaque, fades to transparent
-  g.addColorStop(0.00, "rgba(11,15,31,0.85)");
-  g.addColorStop(0.35, "rgba(11,15,31,0.35)");
+  const fadeH = Math.floor(dy(110));     // softness depth (tweak 90–140)
+  const lift  = Math.floor(dy(55));      // how far ABOVE B.T the fade begins
+  const yTop  = Math.floor(B.T - lift);
+  const yBot  = Math.floor(B.T + fadeH);
+
+  // Smooth gradient that crosses B.T (so B.T is NOT an edge)
+  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+  g.addColorStop(0.00, "rgba(11,15,31,0.00)");
+  g.addColorStop(0.25, "rgba(11,15,31,0.22)");
+  g.addColorStop(0.55, "rgba(11,15,31,0.10)");
   g.addColorStop(1.00, "rgba(11,15,31,0.00)");
 
   ctx.fillStyle = g;
-  ctx.fillRect(Math.floor(B.L), y0, Math.ceil(B.W), fadeH);
+  ctx.fillRect(Math.floor(B.L), yTop, Math.ceil(B.W), (yBot - yTop));
 
   ctx.restore();
 }
+
 
     
 function getDynamicBubbleSize(count){
