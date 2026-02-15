@@ -240,6 +240,11 @@
     bannerInsetXDesign: 146,
     bannerTopYDesign: 260, // was 46 (too high); move down into the neon rectangles
 
+    // Bubble label alignment (relative to 1024x1024 bubble sprite)
+    bubbleSpriteSizePx: 1024,
+    bubbleCenterYPx: 475,        // where the "center" of the bubble is in the sprite
+    bubbleLabelExtraYOffset: 0,  // small tweak in screen px if needed (+down / -up)
+
     // Winner name placement (winnerframe image pixel coordinates)
     winnerNameCenterYDesign: 850,   // from top of the 1920px-tall winnerframe image
     winnerNameMaxWDesign:    550,   // max allowed text width in the 1080px-wide winnerframe image
@@ -1324,8 +1329,14 @@
       if(alpha > 0){
         const maxW = s * 0.78;
         const maxH = s * 0.26;
+        
+        // Map sprite Y center -> on-screen offset from true center
+        const spriteHalf = CFG.bubbleSpriteSizePx * 0.5;
+        const spriteDelta = (CFG.bubbleCenterYPx - spriteHalf) / CFG.bubbleSpriteSizePx; // negative = up
+        const yOff = (spriteDelta * s) + (CFG.bubbleLabelExtraYOffset || 0);
+
         push();
-        translate(0, s*0.08);
+        translate(0, yOff);
         drawFittedName(this.label, maxW, maxH, alpha);
         pop();
       }
