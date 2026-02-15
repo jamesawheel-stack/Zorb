@@ -172,23 +172,15 @@
   let BACKEND_WINNER = null;
   let BACKEND_OK = false;
 
-  // ===== Design-space mapping (pins UI to 1080×1920 pixels regardless of canvas size) =====
+  // ===== Design-space mapping =====
   const DESIGN = { w:1080, h:1920 };
   function dx(x){ return x * (width / DESIGN.w); }
   function dy(y){ return y * (height / DESIGN.h); }
   function dw(w){ return w * (width / DESIGN.w); }
   function dh(h){ return h * (height / DESIGN.h); }
 
-  // ===== Frame/Playable bounds in DESIGN pixels =====
-  // These are the "inner safe" bounds for IG cropping + your UI frame artwork.
-  // Keep these conservative to prevent glow/sprites from visually clipping into the frame edges.
+  // ===== Frame bounds (DESIGN px) =====
   const FRAME = { left:46, right:46, top:160, bottom:32 };
-
-  // Extra padding for sprites/glow so nothing looks like it spills outside the frame.
-  const SAFE_PAD = { side: 26, bottom: 18, topExtra: 0 }; // in DESIGN px
-
-  // Top overlay safe area (notch/headroom)
-  const SAFE_TOP_TEXT = 64; // in DESIGN px (moves PLAYERS/ROUND down from iPhone camera area)
 
   const CFG = {
     aspectW:9, aspectH:16,
@@ -197,7 +189,7 @@
     vignette:true,
 
     // bubble ceiling so they don't sit behind Zorbi
-    bubbleCeilingDesignY: 660, // increase to push bubbles lower under the header
+    bubbleCeilingDesignY: 640,
 
     // Motion
     wanderForce:0.18,
@@ -208,9 +200,9 @@
     swirlJukeChance:0.010,
     swirlJukeForce:1.35,
 
-    // Zorbi placement/size
+    // Zorbi
     robotScale:0.18,
-    robotY:0.245,             // LOWER Zorbi (was 0.20)
+    robotY:0.20,
     robotHoverAmpY:9,
     robotHoverSpeedY:0.028,
     robotSwayFracX:0.08,
@@ -227,7 +219,6 @@
     multiElimChance:0.08,
     ricochetChance:0.06,
 
-    // SHAKE reduced
     screenShakePop:3.2,
     screenShakeShot:0.9,
     shakeDecay:0.92,
@@ -240,20 +231,18 @@
     countdownSec:3,
 
     // Rendering policy
-    showNamesFinalN: 15,     // only render names when remaining <= this
-    showGlowFinalN:  10,     // only render glow when remaining <= this
-    showGlowFinalN2: 5,      // stronger glow at <= this
-
-    // Glow alignment safety
-    glowScale: 1.34,         // visual glow size relative to bubble
+    showNamesFinalN: 15,
+    glowSwapFinalN:  10,     // <= this: swap bubble sprite to bubbleglow.png
   };
 
   // Performance limits
   const PERF = {
     maxSimBubbles: 160,
-    dotUpdateStride: 2,
     physicsHz: 30,
     cellSize: 140,
+    // crowd layer (static grid) for big OFFLINE counts:
+    crowdMinCount: 220,
+    crowdMaxDraw: 2500, // pre-render cap
   };
 
   // ===== Assets =====
@@ -261,9 +250,6 @@
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
   let bubbleImg=null, glowImg=null;
   let spritesOk=false;
-
-  // Auto-correct glow scale if the source PNGs are different intrinsic sizes
-  let glowSizeFix = 1.0;
 
   // Audio
   let audioUnlocked=false;
@@ -278,7 +264,6 @@
   // ===== Sim state =====
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[];
-  let extraDots=[];
   let paused=false;
   let frameShake=0;
   let simState="setup";
@@ -291,39 +276,38 @@
   let winnerMomentFrames = 0;
   const WINNER_MOMENT_LEN = 54;
 
-  // HUD elements
+  // HUD
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl;
   let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, panelSpritesEl, startBtnEl;
   let uiHidden=false, hideTimer=null;
   let lastHudUpdateMs=0, lastPanelUpdateMs=0;
   let wakeLock=null;
 
-  // Fixed timestep accumulator
+  // Fixed timestep
   let accumMs = 0;
   const FIXED_DT_MS = 1000 / PERF.physicsHz;
 
-  function totalRemaining(){ return players.length + extraDots.length; }
+  // Static crowd layer for big OFFLINE games
+  let crowdLayer=null;
+  let crowdLayerKey="";
 
-  // ===== Bounds helpers =====
+  function totalRemaining(){ return players.length; } // no more extraDots sim
+
+  // ===== Bounds =====
   function frameBounds(){
-    // inner rect where the frame lives (no glow)
     const L = dx(FRAME.left);
     const R = width - dx(FRAME.right);
     const T = dy(FRAME.top);
     const B = height - dy(FRAME.bottom);
     return {L,R,T,B, W:R-L, H:B-T};
   }
-
   function bubbleBounds(){
-    // tighter bounds for bubbles so sprite edges + glow don't visually clip past the frame
-    const L = dx(FRAME.left + SAFE_PAD.side);
-    const R = width - dx(FRAME.right + SAFE_PAD.side);
-    const T = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY) + SAFE_PAD.topExtra);
-    const B = height - dy(FRAME.bottom + SAFE_PAD.bottom);
-    return {L,R,T,B, W:R-L, H:B-T};
+    const A = frameBounds();
+    const T = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
+    return { L:A.L, R:A.R, T, B:A.B, W:A.W, H:(A.B - T) };
   }
 
-  // ===== Round timing target (~<= 30s) =====
+  // ===== Round pacing =====
   function targetRateForDuration(startCount){
     const duration = 28;
     const shotsNeeded = Math.max(1, startCount - 1);
@@ -373,7 +357,6 @@
     if(!musicMuted) startMusicSoft();
     updatePanelStatusThrottled(true);
   }
-
   function startMusicSoft(){
     if(!sfxMusic || !audioUnlocked || musicMuted) return;
     if(musicStarted) return;
@@ -394,7 +377,6 @@
     }catch(_){}
     musicStarted = false;
   }
-
   function setMusicMuted(on){
     musicMuted = !!on;
     const btn = document.getElementById("btnMute");
@@ -403,7 +385,6 @@
     if(musicMuted) stopMusicSoft();
     else startMusicSoft();
   }
-
   function playOne(snd, vol){
     if(!audioUnlocked || !snd) return;
     try{
@@ -412,7 +393,6 @@
       snd.play();
     }catch(_){}
   }
-
   function playRandPop(){
     if(!audioUnlocked || !sfxPop.length) return;
     const snd = random(sfxPop);
@@ -423,7 +403,6 @@
       snd.play();
     }catch(_){}
   }
-
   function ensureAudioAlive(){
     if(!audioUnlocked) return;
     const ctx = getAudioContext?.();
@@ -478,11 +457,7 @@
         : [];
 
       rawHandles = rawHandles.map(normalizeHandle).filter(h => h && !isDisallowedHandle(h));
-
       rosterHandles = rawHandles;
-      if(rosterHandles.length < 2){
-        rosterHandles = rawHandles;
-      }
 
       BACKEND_WINNER = normalizeHandle(round?.winner || null);
       if(BACKEND_WINNER && isDisallowedHandle(BACKEND_WINNER)) BACKEND_WINNER = null;
@@ -539,18 +514,15 @@
     hookUI();
     await loadTodayRound();
     resetSim(true);
-
-    // glow size correction if intrinsic png sizes differ
-    if(bubbleImg && glowImg && bubbleImg.width && glowImg.width){
-      glowSizeFix = bubbleImg.width / glowImg.width;
-      if(!isFinite(glowSizeFix) || glowSizeFix<=0) glowSizeFix = 1.0;
-    }
-
     updatePanelStatusThrottled(true);
     updateHudThrottled(true);
   }
 
-  function windowResized(){ createOrResizeCanvas(); }
+  function windowResized(){
+    createOrResizeCanvas();
+    // rebuild crowd layer on resize
+    buildCrowdLayerIfNeeded(true);
+  }
 
   function createOrResizeCanvas(){
     const targetH = Math.min(windowHeight, CFG.baseHeight);
@@ -564,6 +536,7 @@
       createCanvas(Math.floor(w), Math.floor(h));
     }
 
+    // DPR cap
     const dpr = window.devicePixelRatio || 2;
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const pd = isIOS ? Math.min(1.75, dpr) : Math.min(2, dpr);
@@ -716,9 +689,66 @@
     wakeLock=null;
   }
 
+  // ===== Static crowd layer =====
+  function buildCrowdLayerIfNeeded(force=false){
+    const finalCount = ARENA_START_COUNT || 0;
+    const key = `${width}x${height}|${finalCount}|${USE_BACKEND ? "L" : "O"}`;
+    if(!force && crowdLayer && crowdLayerKey === key) return;
+
+    crowdLayerKey = key;
+    crowdLayer = null;
+
+    // only for big OFFLINE rosters (this is your “fake crowd”)
+    if(USE_BACKEND) return;
+    if(finalCount < PERF.crowdMinCount) return;
+    if(!bubbleImg) return;
+
+    const n = Math.min(finalCount, PERF.crowdMaxDraw);
+
+    const A = bubbleBounds();
+    const g = createGraphics(Math.ceil(width), Math.ceil(height));
+    g.pixelDensity(1);
+    g.clear();
+
+    // Slightly dim so it reads as “background crowd”
+    g.tint(255, 60);
+
+    // compute grid
+    const pad = Math.max(6, width*0.008);
+    const cols = Math.max(8, Math.floor(A.W / (pad*4.2)));
+    const rows = Math.max(10, Math.floor(A.H / (pad*4.2)));
+    const maxCells = cols * rows;
+    const drawN = Math.min(n, maxCells);
+
+    // bubble size in grid
+    const cellW = A.W / cols;
+    const cellH = A.H / rows;
+    const s = Math.max(12, Math.min(cellW, cellH) * 0.72);
+
+    let idx = 0;
+    for(let r=0; r<rows; r++){
+      for(let c=0; c<cols; c++){
+        if(idx >= drawN) break;
+        const x = A.L + c*cellW + cellW*0.5;
+        const y = A.T + r*cellH + cellH*0.5;
+
+        // tiny jitter so it doesn't look too perfect
+        const jx = (noise(c*0.8, r*0.8, 10)-0.5) * cellW*0.14;
+        const jy = (noise(c*0.8, r*0.8, 20)-0.5) * cellH*0.14;
+
+        g.imageMode(CENTER);
+        g.image(bubbleImg, x+jx, y+jy, s, s);
+        idx++;
+      }
+    }
+
+    g.noTint();
+    crowdLayer = g;
+  }
+
   function resetSim(keepSetupState){
     players=[]; projectiles=[]; particles=[]; frameShake=0;
-    extraDots=[]; paused=false; winnerPlayed=false;
+    paused=false; winnerPlayed=false;
     winnerMomentFrames = 0;
     accumMs = 0;
 
@@ -738,28 +768,18 @@
 
     ARENA_START_COUNT = finalCount;
 
+    // Rebuild static crowd layer when appropriate
+    buildCrowdLayerIfNeeded(true);
+
+    // Visible sim bubbles
     const simCount = Math.min(finalCount, PERF.maxSimBubbles);
-    const dotCount = Math.max(0, finalCount - simCount);
 
     const A = bubbleBounds();
     const margin = 6;
 
-    for(let i=0;i<dotCount;i++){
-      const z = random();
-      extraDots.push({
-        x: random(A.L+margin, A.R-margin),
-        y: random(A.T+margin, A.B-margin),
-        vx: random(-0.7,0.7),
-        vy: random(-0.7,0.7),
-        tw: random(999),
-        z
-      });
-    }
-
     for(let i=0;i<simCount;i++){
       const size = getDynamicBubbleSize(simCount);
       const r = random(size.min, size.max);
-
       let x = width*0.5, y=height*0.6;
       for(let attempt=0; attempt<160; attempt++){
         x = random(A.L+r, A.R-r);
@@ -857,39 +877,6 @@
   function stepFixed(dt){
     zorb.recoil *= 0.86;
 
-    if(extraDots.length){
-      const A = bubbleBounds();
-      const stride = Math.max(1, PERF.dotUpdateStride|0);
-      const phase = frameCount % stride;
-
-      for(let i=phase;i<extraDots.length;i+=stride){
-        const d = extraDots[i];
-        d.tw += 0.008;
-
-        const n1 = noise(d.x*0.0022, d.y*0.0022, d.tw);
-        const n2 = noise(d.y*0.0020, d.x*0.0020, d.tw+50);
-        d.vx += (n1-0.5)*0.22;
-        d.vy += (n2-0.5)*0.22;
-
-        const cx=width*0.5, cy=height*0.58;
-        const dx0=cx-d.x, dy0=cy-d.y;
-        const inv = 1.0 / (Math.sqrt(dx0*dx0+dy0*dy0) + 220);
-        d.vx += (-dy0)*inv*0.60*CFG.swirlStrength;
-        d.vy += ( dx0)*inv*0.60*CFG.swirlStrength;
-
-        d.x += d.vx;
-        d.y += d.vy;
-
-        if(d.x < A.L){ d.x=A.L; d.vx*=-1; }
-        if(d.x > A.R){ d.x=A.R; d.vx*=-1; }
-        if(d.y < A.T){ d.y=A.T; d.vy*=-1; }
-        if(d.y > A.B){ d.y=A.B; d.vy*=-1; }
-
-        d.vx *= 0.987;
-        d.vy *= 0.987;
-      }
-    }
-
     for(const b of players) b.update();
 
     if(players.length > 1){
@@ -938,24 +925,8 @@
       zorb.charge -= 1;
       if(zorb.charge<=0){
         fireShot();
-
-        if(extraDots.length){
-          const batch = (remaining>2000) ? 10 : (remaining>1000) ? 7 : (remaining>400) ? 4 : 1;
-          eliminateExtraDots(batch);
-        }
-
         zorb.fireCooldown = 1/Math.max(0.8, rate * arenaChaos());
       }
-    }
-
-    if(extraDots.length){
-      if(players.length===0){
-        const d = extraDots.pop();
-        if(d){
-          players.push(new Bubble(1, rosterHandles[0] || "player1", d.x, d.y, 44, random()));
-        }
-      }
-      return;
     }
 
     if(players.length===1){
@@ -978,17 +949,8 @@
   }
 
   function pickTarget(){
-    const remaining = totalRemaining();
-    if(extraDots.length){
-      const dotWeight = extraDots.length / Math.max(1, remaining);
-      const pDot = constrain(0.35 + dotWeight*0.55, 0.35, 0.90);
-      if(random() < pDot){
-        const d = random(extraDots);
-        if(d) return { isDot:true, x:d.x, y:d.y };
-      }
-    }
     const b = players.length ? random(players) : null;
-    return b ? { isDot:false, x:b.x, y:b.y, bubble:b } : { isDot:true, x:width*0.5, y:height*0.6 };
+    return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6 };
   }
 
   function fireShot(){
@@ -1011,10 +973,25 @@
   }
 
   function render(){
+    // OUTSIDE FRAME: pure black
+    background(0);
+
+    const A = frameBounds();
+
+    // clip EVERYTHING to inner frame (background, shake, shots, etc.)
+    clipRect(A.L, A.T, A.W, A.H);
+
+    // inside frame background
     background(CFG.bgColor);
     if (bgImg) image(bgImg, 0, 0, width, height);
     if(CFG.vignette) drawVignette();
 
+    // static crowd layer (big OFFLINE only)
+    if(crowdLayer){
+      image(crowdLayer, 0, 0, width, height);
+    }
+
+    // shake applied only inside clipped area
     let sx=0, sy=0;
     if(frameShake>0 && !paused && simState==="running"){
       sx = random(-frameShake, frameShake);
@@ -1026,15 +1003,15 @@
     push();
     translate(sx, sy);
 
+    // clip bubble+particle region tighter to bubble bounds so they don't go above ceiling
     const B = bubbleBounds();
-    const pad = dy(24);
-    clipRect(B.L, B.T - pad, B.W, B.H + pad);
+    clipRect(B.L, B.T, B.W, B.H);
 
-    drawExtraDots();
     for(const b of players) b.draw();
     for(const pt of particles) pt.draw();
     unclip();
 
+    // projectiles (still clipped by outer frame)
     for(const p of projectiles) p.draw();
 
     drawZorb();
@@ -1052,6 +1029,10 @@
 
     pop();
 
+    // unclip outer frame
+    unclip();
+
+    // overlays (no shake)
     if(simState!=="finished") drawUIFrameOverlayExact();
     if(simState!=="finished") drawTopBannerTextBoxes();
   }
@@ -1072,31 +1053,13 @@
     }
   }
 
-  function drawExtraDots(){
-    if(!extraDots.length) return;
-    const MAX_DRAW = 900;
-    const step = Math.max(1, Math.floor(extraDots.length / MAX_DRAW));
-    noStroke();
-    for(let i=0;i<extraDots.length;i+=step){
-      const d = extraDots[i];
-      const z = d.z ?? 0.5;
-      const r = lerp(1.0, 2.6, z);
-      const a = lerp(38, 155, z);
-      fill(210,230,255, a);
-      circle(d.x, d.y, r);
-    }
-  }
-
-  // Top labels: now anchored to a notch-safe Y, and pinned left/right within design-safe margins.
+  // Top labels
   function drawTopBannerTextBoxes(){
     const boxW = dw(275);
     const boxH = dh(85);
-
-    const topY = dy(SAFE_TOP_TEXT);
-    const marginX = dx(64);
-
-    const leftX = marginX;
-    const rightX = width - marginX - boxW;
+    const leftX = dx(64);
+    const topY  = dy(46);
+    const rightX= width - dx(64) - boxW;
 
     drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "left");
     drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "right");
@@ -1182,6 +1145,7 @@
   }
 
   function drawWinnerMoment(b){
+    // FIXED: don't shadow p5 pop()
     const t = (WINNER_MOMENT_LEN - winnerMomentFrames) / WINNER_MOMENT_LEN;
     const popScale = 1 + 0.10 * Math.sin(Math.min(1, t) * Math.PI);
 
@@ -1189,13 +1153,13 @@
     translate(b.x, b.y);
     const s = (b.r*2) * popScale;
 
+    // In winner moment, use glow sprite directly (same size)
     if(glowImg){
       imageMode(CENTER);
-      tint(255,255,255, 190);
-      image(glowImg, 0, 0, s*CFG.glowScale*glowSizeFix, s*CFG.glowScale*glowSizeFix);
+      tint(255,255,255, 220);
+      image(glowImg, 0, 0, s, s);
       noTint();
-    }
-    if(bubbleImg){
+    }else if(bubbleImg){
       imageMode(CENTER);
       image(bubbleImg, 0, 0, s, s);
     }
@@ -1283,25 +1247,6 @@
     }
   }
 
-  function eliminateExtraDots(batch){
-    if(!extraDots.length) return;
-    const n = Math.min(batch, extraDots.length);
-    for(let k=0;k<n;k++){
-      const idx = int(random(extraDots.length));
-      const d = extraDots[idx];
-      extraDots[idx] = extraDots[extraDots.length-1];
-      extraDots.pop();
-      if(d){
-        if(totalRemaining() <= 600){
-          for(let i=0;i<3;i++){
-            const v=p5.Vector.random2D().mult(random(1.0,3.2));
-            particles.push(new Particle(d.x,d.y,v.x,v.y,10,'spark'));
-          }
-        }
-      }
-    }
-  }
-
   // ===== Name sprite cache =====
   const NAME_CACHE = new Map();
   function getNameSprite(label){
@@ -1342,12 +1287,8 @@
       this.rSeed = rSeed;
 
       this.v=createVector(random(-1,1), random(-1,1)).mult(random(0.6,1.6));
-      this.wob=random(TAU);
-      this.wobSp=random(0.02,0.05);
-
       this.spin=random([-1,1])*random(0.8,1.35);
       this.swirl=random(0.6,1.4);
-
       this.noT = random(999);
 
       const lbl = this.handle ? ("@"+this.handle) : ("#"+this.id);
@@ -1384,16 +1325,13 @@
       this.x += this.v.x;
       this.y += this.v.y;
 
-      // Keep entire bubble+glow inside bounds.
       const A = bubbleBounds();
-      const effR = this.r * CFG.glowScale; // conservative even if glow hidden (prevents edge spills)
-      if(this.x < A.L + effR){ this.x=A.L + effR; this.v.x*=-1; }
-      if(this.x > A.R - effR){ this.x=A.R - effR; this.v.x*=-1; }
-      if(this.y < A.T + effR){ this.y=A.T + effR; this.v.y*=-1; }
-      if(this.y > A.B - effR){ this.y=A.B - effR; this.v.y*=-1; }
+      if(this.x < A.L + this.r){ this.x=A.L + this.r; this.v.x*=-1; }
+      if(this.x > A.R - this.r){ this.x=A.R - this.r; this.v.x*=-1; }
+      if(this.y < A.T + this.r){ this.y=A.T + this.r; this.v.y*=-1; }
+      if(this.y > A.B - this.r){ this.y=A.B - this.r; this.v.y*=-1; }
 
       this.v.mult(CFG.bounceDamping);
-      this.wob += this.wobSp;
     }
 
     separate(other){
@@ -1417,23 +1355,22 @@
 
     draw(){
       const remaining = players.length;
-      const showGlow = (remaining <= CFG.showGlowFinalN);
-      const strongGlow = (remaining <= CFG.showGlowFinalN2);
       const showName = (remaining <= CFG.showNamesFinalN);
 
       const s = this.r*2;
+
+      // Swap sprite to glow when remaining is low (no “bigger bubble behind”)
+      const useGlowSprite = (remaining <= CFG.glowSwapFinalN) && !!glowImg;
+
       push();
       translate(this.x, this.y);
       imageMode(CENTER);
 
-      if(showGlow && glowImg){
-        const a = strongGlow ? 220 : 170;
-        tint(255,255,255,a);
-        image(glowImg, 0, 0, s*CFG.glowScale*glowSizeFix, s*CFG.glowScale*glowSizeFix);
+      if(useGlowSprite){
+        tint(255,255,255,235);
+        image(glowImg, 0, 0, s, s);
         noTint();
-      }
-
-      if(bubbleImg){
+      }else if(bubbleImg){
         image(bubbleImg, 0, 0, s, s);
       }else{
         noStroke();
@@ -1443,21 +1380,11 @@
 
       if(showName && this.nameSpr){
         const ns = this.nameSpr;
-
-        // Keep text INSIDE bubble: target ~90% of bubble width, and clip to circle.
-        const targetW = Math.max(90, s * 0.90);
+        const targetW = Math.min(s*1.55, width*0.72);
         const scale = targetW / ns.w;
         const drawW = ns.w * scale;
         const drawH = ns.h * scale;
-
-        drawingContext.save();
-        drawingContext.beginPath();
-        drawingContext.arc(0, 0, this.r*0.92, 0, Math.PI*2);
-        drawingContext.clip();
-
-        image(ns.g, 0, 0, drawW, drawH);
-
-        drawingContext.restore();
+        image(ns.g, 0, s*0.06, drawW, drawH);
       }
 
       pop();
@@ -1474,7 +1401,6 @@
       this.ricochet=ricochet;
       this.hasRicocheted=false;
     }
-
     update(dt){
       this.x += this.v.x;
       this.y += this.v.y;
@@ -1508,7 +1434,6 @@
         }
       }
     }
-
     draw(){
       noStroke();
       fill(255,120,0,40); circle(this.x,this.y,this.r*3.6);
@@ -1549,8 +1474,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      toastEl.textContent = "Winner saved ✅";
-      toastPulse();
+    console.log("Winner saved ✅");
+    return true;
       return true;
     } catch (e) {
       console.warn("Winner POST failed:", e);
@@ -1574,10 +1499,7 @@
     panelBackendEl.classList.toggle('bad', USE_BACKEND && !BACKEND_OK);
 
     spritesOk = !!(bubbleImg && glowImg);
-    const sizeNote = (bubbleImg && glowImg && bubbleImg.width && glowImg.width && bubbleImg.width !== glowImg.width)
-      ? ` (size-fix ${glowSizeFix.toFixed(3)}×)`
-      : "";
-    panelSpritesEl.textContent = spritesOk ? ("Sprites: OK" + sizeNote) : "Sprites: missing";
+    panelSpritesEl.textContent = spritesOk ? "Sprites: OK" : "Sprites: missing";
     panelSpritesEl.classList.toggle('ok', spritesOk);
     panelSpritesEl.classList.toggle('warn', !spritesOk);
 
