@@ -188,10 +188,8 @@
     bgColor:'#0B0F1F',
     vignette:true,
 
-    // bubble ceiling so they don't sit behind Zorbi
     bubbleCeilingDesignY: 640,
 
-    // Motion
     wanderForce:0.18,
     maxSpeed:2.45,
     bounceDamping:0.986,
@@ -200,10 +198,9 @@
     swirlJukeChance:0.010,
     swirlJukeForce:1.35,
 
-    // Zorbi
     robotScale:0.18,
     robotY:0.20,
-    robotYOffsetDesign: 55, // ✅ lower Zorbi ~40–60px (design px)
+    robotYOffsetDesign: 55,
     robotHoverAmpY:9,
     robotHoverSpeedY:0.028,
     robotSwayFracX:0.08,
@@ -231,29 +228,30 @@
 
     countdownSec:3,
 
-    // Rendering policy
-    namesFadeStartN: 55, // ✅ names start fading in here
-    namesFadeFullN:  20, // ✅ names fully visible here
-    glowSwapFinalN:  10, // <= this: swap bubble sprite to bubbleglow.png
+    namesFadeStartN: 55,
+    namesFadeFullN:  20,
+    glowSwapFinalN:  10,
 
-    // Sprite safety (keeps edges inside frame)
-    bubbleDrawScale: 0.96, // ✅ slightly smaller sprite so edges stay in
+    bubbleDrawScale: 0.96,
+
+    // ✅ NEW: banner box placement inside the UI frame header
+    bannerBoxWDesign: 275,
+    bannerBoxHDesign: 85,
+    bannerInsetXDesign: 64,
+    bannerTopYDesign: 112, // was 46 (too high); move down into the neon rectangles
   };
 
-  // Performance limits
   const PERF = {
     maxSimBubbles: 160,
     physicsHz: 30,
     cellSize: 140,
   };
 
-  // ===== Assets =====
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
   let bubbleImg=null, glowImg=null;
   let spritesOk=false;
 
-  // Audio
   let audioUnlocked=false;
   let musicMuted=false;
   let sfxPop=[], sfxWinner=null, sfxReload=null, sfxFire=null, sfxBass=null, sfxWoosh=null, sfxTension=null, sfxMusic=null;
@@ -263,7 +261,6 @@
   const SFX={ master:0.90, pop:0.65, fire:0.70, reload:0.45, bass:0.75, woosh:0.55, tensionMax:0.55, winner:0.95 };
   const MUSIC = { bed:0.18, fadeInMs:900 };
 
-  // ===== Sim state =====
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[];
   let paused=false;
@@ -272,28 +269,24 @@
   let countdownFrames=0, countdownLabels=[], lastCountdownSec=-1;
 
   let ARENA_START_COUNT=0;
-  let REMAINING_TOTAL=0; // ✅ real remaining count (supports huge offline without “fake crowd”)
+  let REMAINING_TOTAL=0;
 
   let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0, aimMeta:null };
 
-  // Winner phases
   let winnerMomentFrames = 0;
   const WINNER_MOMENT_LEN = 54;
 
-  // HUD
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl;
   let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, panelSpritesEl, startBtnEl;
   let uiHidden=false, hideTimer=null;
   let lastHudUpdateMs=0, lastPanelUpdateMs=0;
   let wakeLock=null;
 
-  // Fixed timestep
   let accumMs = 0;
   const FIXED_DT_MS = 1000 / PERF.physicsHz;
 
   function totalRemaining(){ return Math.max(0, REMAINING_TOTAL || 0); }
 
-  // ===== Bounds =====
   function frameBounds(){
     const L = dx(FRAME.left);
     const R = width - dx(FRAME.right);
@@ -307,7 +300,6 @@
     return { L:A.L, R:A.R, T, B:A.B, W:A.W, H:(A.B - T) };
   }
 
-  // ===== Round pacing =====
   function targetRateForDuration(startCount){
     const duration = 28;
     const shotsNeeded = Math.max(1, startCount - 1);
@@ -341,7 +333,6 @@
     return {min:16,max:22};
   }
 
-  // ===== Audio =====
   function unlockAudioNow(){
     if(audioUnlocked) return;
     try{ userStartAudio(); }catch(_){}
@@ -406,12 +397,9 @@
   function ensureAudioAlive(){
     if(!audioUnlocked) return;
     const ctx = getAudioContext?.();
-    if(ctx && ctx.state === 'suspended'){
-      ctx.resume();
-    }
+    if(ctx && ctx.state === 'suspended') ctx.resume();
   }
 
-  // ===== Backend roster =====
   function normalizeHandle(h){
     if(!h) return null;
     let s = String(h).trim();
@@ -422,7 +410,7 @@
   function isDisallowedHandle(h){
     const s = normalizeHandle(h);
     if(!s) return true;
-    if(s.toLowerCase() === "zorbi.ai") return true; // ✅ keep removed
+    if(s.toLowerCase() === "zorbi.ai") return true;
     return false;
   }
 
@@ -482,7 +470,6 @@
     }
   }
 
-  // ===== p5 preload/setup =====
   function preload(){
     zorbImg = loadImage('zorb.png', ()=>{ zorbLoaded=true; }, ()=>{ zorbLoaded=false; console.warn("zorb.png failed"); });
 
@@ -534,7 +521,6 @@
       createCanvas(Math.floor(w), Math.floor(h));
     }
 
-    // DPR cap
     const dpr = window.devicePixelRatio || 2;
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const pd = isIOS ? Math.min(1.75, dpr) : Math.min(2, dpr);
@@ -546,7 +532,6 @@
     }catch(_){}
   }
 
-  // ---- robust clip helpers ----
   function clipRect(x, y, w, h){
     const ctx = drawingContext;
     ctx.save();
@@ -687,10 +672,8 @@
     wakeLock=null;
   }
 
-  // ===== Spawn helpers (replaces “fake crowd background”) =====
   function getHandleForSpawn(nextId){
     const idx = (ARENA_START_COUNT - REMAINING_TOTAL) + (nextId-1);
-    // Prefer rosterHandles if it exists; fallback for huge offline.
     return rosterHandles[idx] || rosterHandles[nextId-1] || ("player" + nextId);
   }
 
@@ -715,7 +698,6 @@
     players.push(new Bubble(nextId, handle, x, y, r, random()));
   }
 
-  // Keep the arena visually full until we hit the “legible” range
   function refillIfNeeded(){
     const targetSim = Math.min(PERF.maxSimBubbles, REMAINING_TOTAL);
     while(players.length < targetSim){
@@ -730,7 +712,6 @@
     winnerMomentFrames = 0;
     accumMs = 0;
 
-    // ✅ lower Zorbi by ~55 design px
     zorb.y = height * CFG.robotY + dy(CFG.robotYOffsetDesign);
     zorb.aimX = width * 0.5;
     zorb.aimY = height * 0.5;
@@ -748,11 +729,8 @@
     ARENA_START_COUNT = finalCount;
     REMAINING_TOTAL = finalCount;
 
-    // visible sim bubbles
     const simCount = Math.min(finalCount, PERF.maxSimBubbles);
-    for(let i=0;i<simCount;i++){
-      spawnOneBubble(i+1);
-    }
+    for(let i=0;i<simCount;i++) spawnOneBubble(i+1);
 
     updatePanelStatusThrottled(true);
     updateHudThrottled(true);
@@ -799,7 +777,6 @@
     updateHudThrottled(false);
   }
 
-  // ===== Spatial hash collision =====
   function buildGrid(){
     const cs = PERF.cellSize;
     const grid = new Map();
@@ -888,7 +865,6 @@
       }
     }
 
-    // ✅ finished when TOTAL remaining hits 1 AND sim has 1 bubble
     if(totalRemaining()===1 && players.length===1){
       if(simState !== "finished"){
         simState="finished";
@@ -933,20 +909,15 @@
   }
 
   function render(){
-    // OUTSIDE FRAME: pure black
     background(0);
 
     const A = frameBounds();
-
-    // clip EVERYTHING to inner frame
     clipRect(A.L, A.T, A.W, A.H);
 
-    // inside frame background
     background(CFG.bgColor);
     if (bgImg) image(bgImg, 0, 0, width, height);
     if(CFG.vignette) drawVignette();
 
-    // shake applied only inside clipped area
     let sx=0, sy=0;
     if(frameShake>0 && !paused && simState==="running"){
       sx = random(-frameShake, frameShake);
@@ -958,7 +929,6 @@
     push();
     translate(sx, sy);
 
-    // clip bubble+particle region tighter to bubble bounds
     const B = bubbleBounds();
     clipRect(B.L, B.T, B.W, B.H);
 
@@ -966,7 +936,6 @@
     for(const pt of particles) pt.draw();
     unclip();
 
-    // projectiles (still clipped by outer frame)
     for(const p of projectiles) p.draw();
 
     drawZorb();
@@ -984,11 +953,11 @@
 
     pop();
 
-    // unclip outer frame
     unclip();
 
-    // overlays (no shake)
     if(simState!=="finished") drawUIFrameOverlayExact();
+
+    // ✅ draw text AFTER overlay so it sits inside the UI frame rectangles
     if(simState!=="finished") drawTopBannerTextBoxes();
   }
 
@@ -1008,22 +977,25 @@
     }
   }
 
-  // Top labels
+  // ✅ Top labels inside the neon header rectangles
   function drawTopBannerTextBoxes(){
-    const boxW = dw(275);
-    const boxH = dh(85);
-    const leftX = dx(64);
-    const topY  = dy(46);
-    const rightX= width - dx(64) - boxW;
+    const boxW = dw(CFG.bannerBoxWDesign);
+    const boxH = dh(CFG.bannerBoxHDesign);
 
-    drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "left");
-    drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "right");
+    const insetX = dx(CFG.bannerInsetXDesign);
+    const topY  = dy(CFG.bannerTopYDesign);
+
+    const leftX = insetX;
+    const rightX= width - insetX - boxW;
+
+    drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "center");
+    drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "center");
   }
 
   function drawTextInBox(str, x, y, w, h, align){
     push();
     textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
-    const pad = Math.max(6, w*0.06);
+    const pad = Math.max(6, w*0.08);
 
     drawingContext.save();
     drawingContext.beginPath();
@@ -1033,15 +1005,15 @@
     fill(255,255,255,232);
     noStroke();
 
-    let ts = Math.min(22, h*0.55);
+    let ts = Math.min(22, h*0.56);
     textSize(ts);
     while(textWidth(str) > (w - pad*2) && ts > 12){
       ts -= 1;
       textSize(ts);
     }
 
-    textAlign(align==="right" ? RIGHT : LEFT, CENTER);
-    const tx = align==="right" ? (x + w - pad) : (x + pad);
+    textAlign(align==="right" ? RIGHT : align==="center" ? CENTER : LEFT, CENTER);
+    const tx = align==="right" ? (x + w - pad) : align==="center" ? (x + w/2) : (x + pad);
     const ty = y + h/2;
     text(str, tx, ty);
 
@@ -1120,7 +1092,6 @@
   }
 
   function drawWinnerCard(b){
-    // ✅ Keep same “black outside frame” look and fit winnerframe inside frame bounds
     background(0);
     const A = frameBounds();
     clipRect(A.L, A.T, A.W, A.H);
@@ -1131,11 +1102,10 @@
     if(winnerFrameImg){
       push();
       imageMode(CORNER);
-      image(winnerFrameImg, A.L, A.T, A.W, A.H); // ✅ fit to inner frame bounds
+      image(winnerFrameImg, A.L, A.T, A.W, A.H);
       pop();
     }
 
-    // text layout inside inner frame (not full canvas)
     const nameRaw = (b && b.handle) ? ("@" + b.handle) : String(b?.id ?? "WINNER");
     const nameX = A.L + A.W * 0.50;
     const nameY = A.T + A.H * 0.42;
@@ -1158,11 +1128,7 @@
     const ctaY = A.T + A.H * 0.68;
     const ctaMaxW = A.W * 0.80;
 
-    const lines = [
-      'Follow @Zorbi.ai',
-      'Comment "IN"',
-      'Enter The Arena'
-    ];
+    const lines = ['Follow @Zorbi.ai','Comment "IN"','Enter The Arena'];
 
     let ctaSize = 22;
     textAlign(CENTER, CENTER);
@@ -1208,14 +1174,12 @@
     }
   }
 
-  // ✅ Fade-in policy for names (legible window)
   function nameAlphaForRemaining(rem){
     if(rem > CFG.namesFadeStartN) return 0;
     if(rem <= CFG.namesFadeFullN) return 255;
     return map(rem, CFG.namesFadeStartN, CFG.namesFadeFullN, 0, 255);
   }
 
-  // ✅ Fit text within bubble each draw (handles any username length)
   function drawFittedName(label, maxW, maxH, alpha){
     if(alpha <= 0) return;
     push();
@@ -1229,7 +1193,6 @@
       textSize(ts);
     }
 
-    // stroke + fill with alpha
     stroke(0,0,0, min(235, alpha));
     strokeWeight(max(3, ts * 0.22));
     fill(255,255,255, min(250, alpha));
@@ -1281,7 +1244,6 @@
       this.x += this.v.x;
       this.y += this.v.y;
 
-      // ✅ keep edges (sprite) inside frame by using effective radius
       const A = bubbleBounds();
       const eff = this.r * CFG.bubbleDrawScale;
       if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
@@ -1315,7 +1277,7 @@
       const rem = totalRemaining();
       const alpha = nameAlphaForRemaining(rem);
 
-      const s = this.r*2 * CFG.bubbleDrawScale; // ✅ sprite slightly smaller than physics radius
+      const s = this.r*2 * CFG.bubbleDrawScale;
       const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
 
       push();
@@ -1334,11 +1296,9 @@
         circle(0,0,s);
       }
 
-      // ✅ names fade in when bubble count is low enough to be legible
       if(alpha > 0){
         const maxW = s * 0.78;
         const maxH = s * 0.26;
-        // slight downward offset looks better inside bubble
         push();
         translate(0, s*0.08);
         drawFittedName(this.label, maxW, maxH, alpha);
@@ -1374,11 +1334,8 @@
           popBubble(b);
           players.splice(i,1);
 
-          // ✅ decrement true remaining, then refill with fresh bubbles until we hit legible range
           REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
-          if(REMAINING_TOTAL > players.length){
-            refillIfNeeded();
-          }
+          if(REMAINING_TOTAL > players.length) refillIfNeeded();
 
           if(!this.piercing){
             this.dead=true;
