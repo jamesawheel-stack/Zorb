@@ -359,16 +359,25 @@
 
     function drawSoftCeilingFade(){
   const B = bubbleBounds();
-  const fadeH = dy(42); // softness height
-  noStroke();
-  // simple stepped fade (cheap)
-  for(let i=0;i<10;i++){
-    const t = i/9;
-    const a = lerp(0, 180, t);
-    fill(11,15,31,a); // matches your bg vibe
-    rect(B.L, B.T + t*fadeH, B.W, fadeH/10 + 1);
-  }
+  const y0 = Math.floor(B.T);
+  const fadeH = Math.floor(dy(70)); // try 55–90
+
+  const ctx = drawingContext;
+  ctx.save();
+
+  // One smooth gradient = no stripes
+  const g = ctx.createLinearGradient(0, y0, 0, y0 + fadeH);
+  // Top is more opaque, fades to transparent
+  g.addColorStop(0.00, "rgba(11,15,31,0.85)");
+  g.addColorStop(0.35, "rgba(11,15,31,0.35)");
+  g.addColorStop(1.00, "rgba(11,15,31,0.00)");
+
+  ctx.fillStyle = g;
+  ctx.fillRect(Math.floor(B.L), y0, Math.ceil(B.W), fadeH);
+
+  ctx.restore();
 }
+
     
 function getDynamicBubbleSize(count){
   // smaller endgame so final 20/10/5 don’t feel like beach balls
