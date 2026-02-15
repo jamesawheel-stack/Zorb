@@ -189,7 +189,7 @@
     vignette:true,
 
     bubbleCeilingDesignY: 640,
-    framePadDesign: {left: 0, right: 0, top: 0, bottom: 0},
+    framePadDesign: {left: 24, right: 24, top: 0, bottom: 26},
     wanderForce:0.18,
     maxSpeed:2.45,
     bounceDamping:0.986,
@@ -198,7 +198,7 @@
     swirlJukeChance:0.010,
     swirlJukeForce:1.35,
 
-    robotScale:0.18,
+    robotScale:0.14,
     robotY:0.20,
     robotYOffsetDesign: 55,
     robotHoverAmpY:9,
@@ -1262,7 +1262,8 @@
       this.y += this.v.y;
 
       const A = bubbleBounds();
-      const eff = this.r * CFG.bubbleDrawScale + 8;
+      const artPad = Math.max(6, this.r * 0.28);  // more pad when bubbles are tiny
+      const eff = this.r * CFG.bubbleDrawScale + artPad;
       if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
       if(this.x > A.R - eff){ this.x=A.R - eff; this.v.x*=-1; }
       if(this.y < A.T + eff){ this.y=A.T + eff; this.v.y*=-1; }
