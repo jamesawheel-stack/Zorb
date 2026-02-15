@@ -189,7 +189,7 @@
     vignette:true,
 
     bubbleCeilingDesignY: 640,
-
+    framePadDesign = { left: 0, right: 0, top: 0, bottom: 0 },
     wanderForce:0.18,
     maxSpeed:2.45,
     bounceDamping:0.986,
@@ -288,17 +288,34 @@
   function totalRemaining(){ return Math.max(0, REMAINING_TOTAL || 0); }
 
   function frameBounds(){
-    const L = dx(FRAME.left);
-    const R = width - dx(FRAME.right);
-    const T = dy(FRAME.top);
-    const B = height - dy(FRAME.bottom);
-    return {L,R,T,B, W:R-L, H:B-T};
-  }
+  const L = dx(FRAME.left + (CFG.framePadDesign?.left||0));
+  const R = width - dx(FRAME.right + (CFG.framePadDesign?.right||0));
+  const T = dy(FRAME.top + (CFG.framePadDesign?.top||0));
+  const B = height - dy(FRAME.bottom + (CFG.framePadDesign?.bottom||0));
+  return {L,R,T,B, W:R-L, H:B-T};
+}
+
+    
   function bubbleBounds(){
-    const A = frameBounds();
-    const T = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
-    return { L:A.L, R:A.R, T, B:A.B, W:A.W, H:(A.B - T) };
+  const A = frameBounds();
+
+  // Dynamic ceiling: just below Zorbi so it always matches his current placement/scale
+  let dynCeil = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
+
+  if(zorbLoaded && zorbImg){
+    const sx = CFG.robotScale;
+    const imgH = zorbImg.height * sx;
+    const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
+    const robotTop = (zorb.y + hoverY) - imgH*0.5;
+    const robotBottom = robotTop + imgH;
+
+    // padding so bubbles can sit closer without clipping
+    dynCeil = Math.max(dynCeil, robotBottom + dy(18));
   }
+
+  return { L:A.L, R:A.R, T:dynCeil, B:A.B, W:A.W, H:(A.B - dynCeil) };
+}
+
 
   function targetRateForDuration(startCount){
     const duration = 28;
@@ -1245,7 +1262,7 @@
       this.y += this.v.y;
 
       const A = bubbleBounds();
-      const eff = this.r * CFG.bubbleDrawScale;
+      const eff = this.r * CFG.bubbleDrawScale + 8;
       if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
       if(this.x > A.R - eff){ this.x=A.R - eff; this.v.x*=-1; }
       if(this.y < A.T + eff){ this.y=A.T + eff; this.v.y*=-1; }
