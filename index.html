@@ -190,6 +190,7 @@
 
     bubbleCeilingDesignY: 640,
     framePadDesign: {left: 24, right: 24, top: 0, bottom: 26},
+    bubbleAreaInsetDesign: { left: 36, right: 36, top: 0, bottom: 44 },
     wanderForce:0.18,
     maxSpeed:2.45,
     bounceDamping:0.986,
@@ -309,7 +310,6 @@
   function bubbleBounds(){
   const A = frameBounds();
 
-  // Dynamic ceiling: just below Zorbi so it always matches his current placement/scale
   let dynCeil = dy(Math.max(FRAME.top, CFG.bubbleCeilingDesignY));
 
   if(zorbLoaded && zorbImg){
@@ -318,13 +318,18 @@
     const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
     const robotTop = (zorb.y + hoverY) - imgH*0.5;
     const robotBottom = robotTop + imgH;
-
-    // padding so bubbles can sit closer without clipping
     dynCeil = Math.max(dynCeil, robotBottom + dy(18));
   }
 
-  return { L:A.L, R:A.R, T:dynCeil, B:A.B, W:A.W, H:(A.B - dynCeil) };
+  const inset = CFG.bubbleAreaInsetDesign || {left:0,right:0,top:0,bottom:0};
+  const L = A.L + dx(inset.left);
+  const R = A.R - dx(inset.right);
+  const T = dynCeil + dy(inset.top);
+  const B = A.B - dy(inset.bottom);
+
+  return { L, R, T, B, W:(R-L), H:(B-T) };
 }
+
 
 
   function targetRateForDuration(startCount){
@@ -1015,38 +1020,59 @@
     const leftX = insetX;
     const rightX= width - insetX - boxW;
 
-    drawTextInBox(`PLAYERS ${totalRemaining()}/${ARENA_START_COUNT || totalRemaining()}`, leftX, topY, boxW, boxH, "center");
+const n = totalRemaining();
+const a = ARENA_START_COUNT || n;
+
+const leftLabel = (a >= 1000)
+  ? `${n}/${a}`                  // ✅ compact when huge
+  : `PLAYERS ${n}/${a}`;
+
+drawTextInBox(leftLabel, leftX, topY, boxW, boxH, "center");
+
     drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "center");
   }
 
-  function drawTextInBox(str, x, y, w, h, align){
-    push();
-    textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
-    const pad = Math.max(6, w*0.08);
+function drawTextInBox(str, x, y, w, h, align){
+  push();
+  textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
+  textStyle(BOLD);
 
-    drawingContext.save();
-    drawingContext.beginPath();
-    drawingContext.rect(x, y, w, h);
-    drawingContext.clip();
+  const pad = Math.max(6, w*0.08);
 
-    fill(255,255,255,232);
-    noStroke();
+  drawingContext.save();
+  drawingContext.beginPath();
+  drawingContext.rect(x, y, w, h);
+  drawingContext.clip();
 
-    let ts = Math.min(22, h*0.56);
+  fill(255,255,255,232);
+  noStroke();
+
+  // Start a bit bigger, then shrink as needed
+  let ts = Math.min(26, h * 0.62);
+  const minTs = 8; // ✅ allow smaller than 12
+
+  textSize(ts);
+  while(textWidth(str) > (w - pad*2) && ts > minTs){
+    ts -= 1;
     textSize(ts);
-    while(textWidth(str) > (w - pad*2) && ts > 12){
-      ts -= 1;
-      textSize(ts);
-    }
-
-    textAlign(align==="right" ? RIGHT : align==="center" ? CENTER : LEFT, CENTER);
-    const tx = align==="right" ? (x + w - pad) : align==="center" ? (x + w/2) : (x + pad);
-    const ty = y + h/2;
-    text(str, tx, ty);
-
-    drawingContext.restore();
-    pop();
   }
+
+  // ✅ if still too wide at min size, shorten the string
+  if(textWidth(str) > (w - pad*2)){
+    // common good fallback for the left box
+    const short = str.replace(/^PLAYERS\s+/i, "");
+    textSize(ts);
+    if(textWidth(short) <= (w - pad*2)) str = short;
+  }
+
+  textAlign(align==="right" ? RIGHT : align==="center" ? CENTER : LEFT, CENTER);
+  const tx = align==="right" ? (x + w - pad) : align==="center" ? (x + w/2) : (x + pad);
+  const ty = y + h/2;
+  text(str, tx, ty);
+
+  drawingContext.restore();
+  pop();
+}
 
   function drawZorb(){
     const robotX = getRobotX();
