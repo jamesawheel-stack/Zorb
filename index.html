@@ -198,7 +198,6 @@
 
     bubbleCeilingDesignY: 640,
 
-    // loosen play area to match measured inner frame
     bubbleAreaInsetDesign: { left: 10, right: 10, top: 0, bottom: 26 },
 
     wanderForce:0.18,
@@ -250,9 +249,17 @@
     bannerInsetXDesign: 148,
     bannerTopYDesign: 262,
 
-    bubbleSpriteSizePx: 1024,
-    bubbleCenterYPx: 430,
-    bubbleLabelExtraYOffset: -1,
+    // UPDATED: sprite metrics for 720x700 assets (bubble.png & bubbleglow.png)
+    bubbleSpriteW: 720,
+    bubbleSpriteH: 700,
+
+    // Your measured transparent margins:
+    // left=46, right=40, top=22, bottom=38 => visible center:
+    // x=46 + (720-46-40)/2 = 363, y=22 + (700-22-38)/2 = 342
+    bubbleContentCenterYPx: 342,
+
+    // small nudge if you want (positive moves label down)
+    bubbleLabelExtraYOffset: 0,
 
     winnerNameCenterYDesign: 850,
     winnerNameMaxWDesign:    550,
@@ -269,7 +276,10 @@
   const BATTLE_TIME_CAP_SEC = 30;
   const DIRECT_POP_THRESHOLD = 90;
   let elimBudget = 0;
+
+  // UPDATED: sound throttling to avoid CPU spikes on huge rosters
   let lastPopSfxMs = 0;
+  const POP_SFX_COOLDOWN_MS = 55; // hard cap on pop SFX rate
 
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
@@ -405,8 +415,35 @@
       snd.play();
     }catch(_){}
   }
-  function playRandPop(){
+
+  // UPDATED: probability gating + hard cooldown to reduce CPU churn on huge rosters
+  function popSfxProbability(rem){
+    if(rem >= 1500) return 0.08;
+    if(rem >= 800)  return 0.12;
+    if(rem >= 400)  return 0.18;
+    if(rem >= 200)  return 0.28;
+    if(rem >= 120)  return 0.42;
+    if(rem >= 70)   return 0.60;
+    if(rem >= 35)   return 0.82;
+    return 1.00;
+  }
+  function bassSfxProbability(rem){
+    if(rem >= 200) return 0.12;
+    if(rem >= 120) return 0.18;
+    if(rem >= 70)  return 0.28;
+    if(rem >= 35)  return 0.55;
+    return 1.00;
+  }
+
+  function playRandPopThrottled(){
     if(!audioUnlocked || !sfxPop.length) return;
+    const now = performance.now();
+    if(now - lastPopSfxMs < POP_SFX_COOLDOWN_MS) return;
+
+    const rem = totalRemaining();
+    if(random() > popSfxProbability(rem)) return;
+
+    lastPopSfxMs = now;
     const snd = random(sfxPop);
     if(!snd) return;
     try{
@@ -415,6 +452,14 @@
       snd.play();
     }catch(_){}
   }
+
+  function playBassThrottled(){
+    if(!audioUnlocked || !sfxBass) return;
+    const rem = totalRemaining();
+    if(random() > bassSfxProbability(rem)) return;
+    playOne(sfxBass, SFX.bass);
+  }
+
   function ensureAudioAlive(){
     if(!audioUnlocked) return;
     const ctx = getAudioContext?.();
@@ -860,9 +905,6 @@
     zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
     zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
 
-    const now = performance.now();
-    if((now - lastPopSfxMs) > 70) lastPopSfxMs = now;
-
     playOne(sfxFire, SFX.fire * 0.55);
     zorb.recoil = 1.0;
     frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*0.55));
@@ -1144,18 +1186,21 @@
     const t = (WINNER_MOMENT_LEN - winnerMomentFrames) / WINNER_MOMENT_LEN;
     const popScale = 1 + 0.10 * Math.sin(Math.min(1, t) * Math.PI);
 
+    const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
+
     push();
     translate(b.x, b.y);
-    const s = (b.r*2) * popScale;
+    const sW = (b.r*2) * popScale;
+    const sH = sW * aspect;
 
     if(glowImg){
       imageMode(CENTER);
       tint(255,255,255, 220);
-      image(glowImg, 0, 0, s, s);
+      image(glowImg, 0, 0, sW, sH);
       noTint();
     }else if(bubbleImg){
       imageMode(CENTER);
-      image(bubbleImg, 0, 0, s, s);
+      image(bubbleImg, 0, 0, sW, sH);
     }
     pop();
   }
@@ -1228,9 +1273,10 @@
     unclip();
   }
 
+  // UPDATED: use throttled sound helpers
   function popBubble(b){
-    playRandPop();
-    playOne(sfxBass, SFX.bass);
+    playRandPopThrottled();
+    playBassThrottled();
 
     if(simState==="running"){
       frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
@@ -1318,8 +1364,11 @@
       this.y += this.v.y;
 
       const A = bubbleBounds();
-      const artPad = Math.max(6, this.r * 0.28);
+
+      // UPDATED: smaller art padding now that the sprite padding is mostly gone (lets bubbles sit closer to frame edges)
+      const artPad = Math.max(3, this.r * 0.12);
       const eff = this.r * CFG.bubbleDrawScale + artPad;
+
       if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
       if(this.x > A.R - eff){ this.x=A.R - eff; this.v.x*=-1; }
       if(this.y < A.T + eff){ this.y=A.T + eff; this.v.y*=-1; }
@@ -1351,7 +1400,11 @@
       const rem = totalRemaining();
       const alpha = nameAlphaForRemaining(rem);
 
-      const s = this.r*2 * CFG.bubbleDrawScale;
+      const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
+
+      const sW = this.r*2 * CFG.bubbleDrawScale;
+      const sH = sW * aspect;
+
       const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
 
       push();
@@ -1360,23 +1413,24 @@
 
       if(useGlowSprite){
         tint(255,255,255,235);
-        image(glowImg, 0, 0, s, s);
+        image(glowImg, 0, 0, sW, sH);
         noTint();
       }else if(bubbleImg){
-        image(bubbleImg, 0, 0, s, s);
+        image(bubbleImg, 0, 0, sW, sH);
       }else{
         noStroke();
         fill(255,255,255,18);
-        circle(0,0,s);
+        circle(0,0,sW);
       }
 
       if(alpha > 0){
-        const maxW = s * 0.78;
-        const maxH = s * 0.26;
+        const maxW = sW * 0.78;
+        const maxH = sH * 0.26;
 
-        const spriteHalf = CFG.bubbleSpriteSizePx * 0.5;
-        const spriteDelta = (CFG.bubbleCenterYPx - spriteHalf) / CFG.bubbleSpriteSizePx;
-        const yOff = (spriteDelta * s) + (CFG.bubbleLabelExtraYOffset || 0);
+        // UPDATED: label Y offset based on non-square sprite height + your measured “true bubble center”
+        const spriteHalfH = CFG.bubbleSpriteH * 0.5;
+        const spriteDeltaY = (CFG.bubbleContentCenterYPx - spriteHalfH) / CFG.bubbleSpriteH;
+        const yOff = (spriteDeltaY * sH) + (CFG.bubbleLabelExtraYOffset || 0);
 
         push();
         translate(0, yOff);
