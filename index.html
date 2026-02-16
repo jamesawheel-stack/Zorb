@@ -249,16 +249,9 @@
     bannerInsetXDesign: 148,
     bannerTopYDesign: 262,
 
-    // UPDATED: sprite metrics for 720x700 assets (bubble.png & bubbleglow.png)
     bubbleSpriteW: 720,
     bubbleSpriteH: 700,
-
-    // Your measured transparent margins:
-    // left=46, right=40, top=22, bottom=38 => visible center:
-    // x=46 + (720-46-40)/2 = 363, y=22 + (700-22-38)/2 = 342
     bubbleContentCenterYPx: 342,
-
-    // small nudge if you want (positive moves label down)
     bubbleLabelExtraYOffset: 0,
 
     winnerNameCenterYDesign: 840,
@@ -272,14 +265,12 @@
     cellSize: 140,
   };
 
-  // pacing: ceiling only
   const BATTLE_TIME_CAP_SEC = 30;
   const DIRECT_POP_THRESHOLD = 90;
   let elimBudget = 0;
 
-  // UPDATED: sound throttling to avoid CPU spikes on huge rosters
   let lastPopSfxMs = 0;
-  const POP_SFX_COOLDOWN_MS = 55; // hard cap on pop SFX rate
+  const POP_SFX_COOLDOWN_MS = 55;
 
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
@@ -291,6 +282,10 @@
   let sfxPop=[], sfxWinner=null, sfxReload=null, sfxFire=null, sfxBass=null, sfxWoosh=null, sfxTension=null, sfxMusic=null;
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
   let musicStarted=false;
+
+  // AUDIO FIXES
+  let musicRestartTimer = null;   // winner->resume
+  let musicStopTimer = null;      // stop cleanup
 
   const SFX={ master:0.90, pop:0.65, fire:0.70, reload:0.45, bass:0.75, woosh:0.55, tensionMax:0.55, winner:0.95 };
   const MUSIC = { bed:0.18, fadeInMs:900 };
@@ -357,43 +352,38 @@
     return ["GO!"];
   }
 
-function drawSoftCeilingFade(){
-  const B = bubbleBounds();
+  function drawSoftCeilingFade(){
+    const B = bubbleBounds();
 
-  const ctx = drawingContext;
-  ctx.save();
+    const ctx = drawingContext;
+    ctx.save();
 
-  const fadeH = Math.floor(dy(110));     // softness depth (tweak 90–140)
-  const lift  = Math.floor(dy(55));      // how far ABOVE B.T the fade begins
-  const yTop  = Math.floor(B.T - lift);
-  const yBot  = Math.floor(B.T + fadeH);
+    const fadeH = Math.floor(dy(110));
+    const lift  = Math.floor(dy(55));
+    const yTop  = Math.floor(B.T - lift);
+    const yBot  = Math.floor(B.T + fadeH);
 
-  // Smooth gradient that crosses B.T (so B.T is NOT an edge)
-  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
-  g.addColorStop(0.00, "rgba(11,15,31,0.00)");
-  g.addColorStop(0.25, "rgba(11,15,31,0.22)");
-  g.addColorStop(0.55, "rgba(11,15,31,0.10)");
-  g.addColorStop(1.00, "rgba(11,15,31,0.00)");
+    const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+    g.addColorStop(0.00, "rgba(11,15,31,0.00)");
+    g.addColorStop(0.25, "rgba(11,15,31,0.22)");
+    g.addColorStop(0.55, "rgba(11,15,31,0.10)");
+    g.addColorStop(1.00, "rgba(11,15,31,0.00)");
 
-  ctx.fillStyle = g;
-  ctx.fillRect(Math.floor(B.L), yTop, Math.ceil(B.W), (yBot - yTop));
+    ctx.fillStyle = g;
+    ctx.fillRect(Math.floor(B.L), yTop, Math.ceil(B.W), (yBot - yTop));
 
-  ctx.restore();
-}
+    ctx.restore();
+  }
 
-
-    
-function getDynamicBubbleSize(count){
-  // smaller endgame so final 20/10/5 don’t feel like beach balls
-  if(count<=5)   return {min:34,max:46};
-  if(count<=10)  return {min:36,max:52};
-  if(count<=20)  return {min:38,max:56};
-  if(count<=40)  return {min:42,max:62};
-  if(count<=60)  return {min:40,max:58};
-  if(count<=100) return {min:22,max:34};
-  return {min:16,max:22};
-}
-
+  function getDynamicBubbleSize(count){
+    if(count<=5)   return {min:34,max:46};
+    if(count<=10)  return {min:36,max:52};
+    if(count<=20)  return {min:38,max:56};
+    if(count<=40)  return {min:42,max:62};
+    if(count<=60)  return {min:40,max:58};
+    if(count<=100) return {min:22,max:34};
+    return {min:16,max:22};
+  }
 
   function unlockAudioNow(){
     if(audioUnlocked) return;
@@ -402,6 +392,7 @@ function getDynamicBubbleSize(count){
 
     if(sfxTension){
       try{
+        sfxTension.stop();
         sfxTension.setLoop(true);
         sfxTension.amp(0, 0);
         sfxTension.play();
@@ -410,6 +401,7 @@ function getDynamicBubbleSize(count){
     if(!musicMuted) startMusicSoft();
     updatePanelStatusThrottled(true);
   }
+
   function startMusicSoft(){
     if(!sfxMusic || !audioUnlocked || musicMuted) return;
     if(musicStarted) return;
@@ -422,14 +414,23 @@ function getDynamicBubbleSize(count){
       sfxMusic.amp(MUSIC.bed, Math.max(0.2, MUSIC.fadeInMs/1000));
     }catch(e){ console.warn("music start failed", e); }
   }
+
   function stopMusicSoft(){
     if(!sfxMusic) return;
+
+    if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
+    if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
+
     try{
       sfxMusic.amp(0, 0.18);
-      setTimeout(()=>{ try{sfxMusic.stop();}catch(_){} }, 220);
+      musicStopTimer = setTimeout(()=>{
+        try{ sfxMusic.stop(); }catch(_){}
+        musicStopTimer = null;
+      }, 220);
     }catch(_){}
     musicStarted = false;
   }
+
   function setMusicMuted(on){
     musicMuted = !!on;
     const btn = document.getElementById("btnMute");
@@ -438,6 +439,7 @@ function getDynamicBubbleSize(count){
     if(musicMuted) stopMusicSoft();
     else startMusicSoft();
   }
+
   function playOne(snd, vol){
     if(!audioUnlocked || !snd) return;
     try{
@@ -447,7 +449,6 @@ function getDynamicBubbleSize(count){
     }catch(_){}
   }
 
-  // UPDATED: probability gating + hard cooldown to reduce CPU churn on huge rosters
   function popSfxProbability(rem){
     if(rem >= 1500) return 0.08;
     if(rem >= 800)  return 0.12;
@@ -491,10 +492,36 @@ function getDynamicBubbleSize(count){
     playOne(sfxBass, SFX.bass);
   }
 
+  // AUDIO: resume context only on events
   function ensureAudioAlive(){
     if(!audioUnlocked) return;
-    const ctx = getAudioContext?.();
-    if(ctx && ctx.state === 'suspended') ctx.resume();
+    const ctx = (typeof getAudioContext === "function") ? getAudioContext() : null;
+    if(ctx && ctx.state === 'suspended'){
+      try{ ctx.resume(); }catch(_){}
+    }
+  }
+
+  // AUDIO: hard stop everything for clean reset/restart
+  function stopAllAudio(){
+    if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
+    if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
+
+    tensionTarget = 0;
+    tensionVol = 0;
+
+    try{ sfxMusic?.stop(); }catch(_){}
+    try{ sfxTension?.stop(); }catch(_){}
+    try{ sfxWinner?.stop(); }catch(_){}
+    try{ sfxFire?.stop(); }catch(_){}
+    try{ sfxReload?.stop(); }catch(_){}
+    try{ sfxWoosh?.stop(); }catch(_){}
+    try{ sfxBass?.stop(); }catch(_){}
+    if(Array.isArray(sfxPop)){
+      for(const s of sfxPop){ try{ s?.stop(); }catch(_){} }
+    }
+
+    musicStarted = false;
+    winnerPlayed = false;
   }
 
   function normalizeHandle(h){
@@ -696,6 +723,12 @@ function getDynamicBubbleSize(count){
     document.body.addEventListener('touchstart', gesture, { passive:true });
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
+    // AUDIO: resume context only when appropriate
+    document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) ensureAudioAlive(); });
+    window.addEventListener('focus', ensureAudioAlive);
+    document.body.addEventListener('pointerdown', ensureAudioAlive, { passive:true });
+    document.body.addEventListener('touchstart', ensureAudioAlive, { passive:true });
+
     document.body.addEventListener('click', ()=>{
       if(!panelEl.classList.contains('hidden')) return;
       if(uiHidden){ showUI(true); bumpUI(); return; }
@@ -790,6 +823,9 @@ function getDynamicBubbleSize(count){
   }
 
   function resetSim(keepSetupState){
+    // AUDIO: ensure restart is always clean
+    stopAllAudio();
+
     players=[]; projectiles=[]; particles=[]; frameShake=0;
     paused=false; winnerPlayed=false;
     winnerMomentFrames = 0;
@@ -845,8 +881,6 @@ function getDynamicBubbleSize(count){
   }
 
   function draw(){
-    ensureAudioAlive();
-
     if(!paused){
       const dt = Math.min(50, deltaTime || 16);
       accumMs += dt;
@@ -1016,7 +1050,9 @@ function getDynamicBubbleSize(count){
         winnerPlayed=true;
         stopMusicSoft();
         playOne(sfxWinner, SFX.winner);
-        setTimeout(()=>{ if(!musicMuted) startMusicSoft(); }, 900);
+
+        // AUDIO: store timer so reset can cancel it
+        musicRestartTimer = setTimeout(()=>{ if(!musicMuted) startMusicSoft(); }, 900);
 
         (async () => {
           try { await reportWinnerToBackend(players[0]); } catch(e){ console.warn(e); }
@@ -1072,7 +1108,7 @@ function getDynamicBubbleSize(count){
     for(const p of projectiles) p.draw();
 
     drawSoftCeilingFade();
-    
+
     drawZorb();
     if(simState==="countdown") drawCountdown();
 
@@ -1302,7 +1338,6 @@ function getDynamicBubbleSize(count){
     unclip();
   }
 
-  // UPDATED: use throttled sound helpers
   function popBubble(b){
     playRandPopThrottled();
     playBassThrottled();
@@ -1394,7 +1429,6 @@ function getDynamicBubbleSize(count){
 
       const A = bubbleBounds();
 
-      // UPDATED: smaller art padding now that the sprite padding is mostly gone (lets bubbles sit closer to frame edges)
       const artPad = Math.max(3, this.r * 0.12);
       const eff = this.r * CFG.bubbleDrawScale + artPad;
 
@@ -1456,7 +1490,6 @@ function getDynamicBubbleSize(count){
         const maxW = sW * 0.78;
         const maxH = sH * 0.26;
 
-        // UPDATED: label Y offset based on non-square sprite height + your measured “true bubble center”
         const spriteHalfH = CFG.bubbleSpriteH * 0.5;
         const spriteDeltaY = (CFG.bubbleContentCenterYPx - spriteHalfH) / CFG.bubbleSpriteH;
         const yOff = (spriteDeltaY * sH) + (CFG.bubbleLabelExtraYOffset || 0);
