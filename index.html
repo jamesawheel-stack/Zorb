@@ -190,7 +190,7 @@
     vignette:true,
 
     bubbleCeilingDesignY: 640,
-    bubbleAreaInsetDesign: { left: 18, right: 18, top: 6, bottom: 40 },
+    bubbleAreaInsetDesign: { left: 18, right: 18, top: 6, bottom: 92 },
 
     wanderForce:0.18,
     maxSpeed:2.45,
@@ -230,6 +230,9 @@
 
     bubbleDrawScale: 0.96,
 
+
+    bubbleEdgePad: 6,
+    glowExtraPad: 30,
     bannerBoxWDesign: 270,
     bannerBoxHDesign: 85,
     bannerInsetXDesign: 148,
@@ -879,10 +882,12 @@
 
   function repositionBubble(b){
     const A = bubbleBounds();
-    const r = b.r;
+    const rem = totalRemaining();
+    const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
+    const eff = b.r*CFG.bubbleDrawScale + CFG.bubbleEdgePad + (useGlowSprite ? CFG.glowExtraPad : 0);
     for(let k=0;k<PERF.repositionAttempts;k++){
-      b.x = random(A.L+r, A.R-r);
-      b.y = random(A.T+r, A.B-r);
+      b.x = random(A.L+eff, A.R-eff);
+      b.y = random(A.T+eff, A.B-eff);
       if(k >= 4 && random() < 0.35) break;
     }
     b.v = createVector(random(-1,1), random(-1,1)).mult(random(0.6,1.6));
@@ -1600,8 +1605,9 @@
       this.y += this.v.y;
 
       const A = bubbleBounds();
-      const artPad = Math.max(3, this.r * 0.12);
-      const eff = this.r * CFG.bubbleDrawScale + artPad;
+      const rem = totalRemaining();
+      const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
+      const eff = this.r * CFG.bubbleDrawScale + CFG.bubbleEdgePad + (useGlowSprite ? CFG.glowExtraPad : 0);
 
       if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
       if(this.x > A.R - eff){ this.x=A.R - eff; this.v.x*=-1; }
