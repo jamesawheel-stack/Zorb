@@ -230,10 +230,10 @@
 
     bubbleDrawScale: 0.96,
 
-
-    bubbleEdgePad: 6,
-    glowExtraPad: 30,
-    bannerBoxWDesign: 270,
+    // Sprite padding (transparent margins) in source images
+    bubblePadPx: { l:46, r:40, t:24, b:36 },
+    glowPadPx: 30,
+bannerBoxWDesign: 270,
     bannerBoxHDesign: 85,
     bannerInsetXDesign: 148,
     bannerTopYDesign: 262,
@@ -267,6 +267,8 @@
   const BURST_SFX_COOLDOWN_MS = 90;   // 1 sound per burst
   let lastWooshSfxMs=0;
   const WOOSH_SFX_COOLDOWN_MS = 120;
+  let lastReloadSfxMs=0;
+  const RELOAD_SFX_COOLDOWN_MS = 260;
 
   // Token-budgets (prevents p5.sound scheduling churn on huge rounds)
   let popTokens = 0, shotTokens = 0;
@@ -294,6 +296,7 @@
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null, bgGlowImg=null;
   let bubbleImg=null, glowImg=null;
+  let fire1Img=null, fire2Img=null;
   let spritesOk=false;
 
   let audioUnlocked=false;
@@ -313,7 +316,7 @@
   const MUSIC = { bed:0.18, fadeInMs:900, duckLevel:0.05, duckMs:900 };
 
   let rosterHandles=[];
-  let players=[], projectiles=[], particles=[];
+  let players=[], projectiles=[], particles=[], bursts=[];
   let paused=false;
   let frameShake=0;
   let simState="setup";
@@ -373,6 +376,29 @@
 
     return { L, R, T, B, W:(R-L), H:(B-T) };
   }
+
+  function bubbleSpriteExtents(r, useGlow){
+    // distances from bubble center to the *visible* edge (accounts for transparent PNG padding)
+    const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
+    const sW = r*2 * (CFG.bubbleDrawScale || 1);
+    const sH = sW * aspect;
+
+    const pad = CFG.bubblePadPx || {l:0,r:0,t:0,b:0};
+
+    let left   = sW * (0.5 - (pad.l / CFG.bubbleSpriteW));
+    let right  = sW * (0.5 - (pad.r / CFG.bubbleSpriteW));
+    let top    = sH * (0.5 - (pad.t / CFG.bubbleSpriteH));
+    let bottom = sH * (0.5 - (pad.b / CFG.bubbleSpriteH));
+
+    if(useGlow){
+      const g = (CFG.glowPadPx || 0);
+      const gx = sW * (g / CFG.bubbleSpriteW);
+      const gy = sH * (g / CFG.bubbleSpriteH);
+      left += gx; right += gx; top += gy; bottom += gy;
+    }
+    return { left, right, top, bottom, sW, sH };
+  }
+
 
   function buildCountdownLabels(startCount){
     if(startCount >= 25) return ["3","2","1","GO!"];
@@ -514,7 +540,7 @@
     if(!audioUnlocked || !sfxWooshPool.length) return;
     const now = performance.now();
     if(now - lastWooshSfxMs < WOOSH_SFX_COOLDOWN_MS) return;
-    if(!takeShotToken()) return;
+    // don't consume shot tokens; shots have priority
     lastWooshSfxMs = now;
     playFromPool(sfxWooshPool, "woosh", SFX.woosh);
   }
@@ -632,6 +658,9 @@
 
     bubbleImg = loadImage('bubble.png', ()=>{}, ()=>{ console.warn("Missing bubble.png"); });
     glowImg   = loadImage('bubbleglow.png', ()=>{}, ()=>{ console.warn("Missing bubbleglow.png"); });
+
+    fire1Img  = loadImage('fire1.png', ()=>{}, ()=>{ console.warn("Missing fire1.png"); });
+    fire2Img  = loadImage('fire2.png', ()=>{}, ()=>{ console.warn("Missing fire2.png"); });
 
     // pooled SFX (avoid stop/restart thrash)
     sfxFirePool   = [];
@@ -884,10 +913,10 @@
     const A = bubbleBounds();
     const rem = totalRemaining();
     const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
-    const eff = b.r*CFG.bubbleDrawScale + CFG.bubbleEdgePad + (useGlowSprite ? CFG.glowExtraPad : 0);
+    const ex = bubbleSpriteExtents(b.r, useGlowSprite);
     for(let k=0;k<PERF.repositionAttempts;k++){
-      b.x = random(A.L+eff, A.R-eff);
-      b.y = random(A.T+eff, A.B-eff);
+      b.x = random(A.L + ex.left,  A.R - ex.right);
+      b.y = random(A.T + ex.top,   A.B - ex.bottom);
       if(k >= 4 && random() < 0.35) break;
     }
     b.v = createVector(random(-1,1), random(-1,1)).mult(random(0.6,1.6));
@@ -1012,7 +1041,7 @@
   function resetSim(keepSetupState){
     stopAllAudio();
 
-    players=[]; projectiles=[]; particles=[]; frameShake=0;
+    players=[]; projectiles=[]; particles=[]; bursts=[]; frameShake=0;
     paused=false; winnerPlayed=false;
     winnerMomentFrames = 0;
     accumMs = 0;
@@ -1143,10 +1172,14 @@
     const v = players[victimIdx];
     if(!v) return false;
 
-    // aim animation only (no per-elim fire/reload sounds in burst mode)
+    // aim animation + occasional cosmetic shot so big battles still show firing
     zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
     zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
     zorb.recoil = 0.35;
+
+    if(random() < 0.55){
+      spawnCosmeticShotTo(zorb.aimX, zorb.aimY);
+    }
 
     return eliminateAtIndex(victimIdx);
   }
@@ -1154,6 +1187,55 @@
   function pickTarget(){
     const b = players.length ? random(players) : null;
     return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6 };
+  }
+
+
+  function spawnCosmeticShotTo(targetX, targetY){
+    const origin = random(cannonOrigins());
+    const dir = createVector(targetX-origin.x, targetY-origin.y).normalize();
+    const vel = dir.mult(CFG.projectileSpeed * 0.92);
+
+    if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
+    const pr = new Projectile(origin.x, origin.y, vel.x, vel.y);
+    pr.cosmetic = true;
+    pr.ttl = 0.28; // seconds
+    projectiles.push(pr);
+
+    if(takeShotToken()){
+      playFromPool(sfxFirePool, "fire", SFX.fire);
+    }
+    zorb.recoil = 0.85;
+  }
+
+  class Burst{
+    constructor(x,y,angle=0,life=10,scale=1){
+      this.x=x; this.y=y;
+      this.angle=angle;
+      this.life=life; this.maxLife=life;
+      this.scale=scale;
+      this.dead=false;
+    }
+    update(){
+      this.life -= 1;
+      if(this.life<=0) this.dead=true;
+    }
+    draw(){
+      const a = map(this.life, 0, this.maxLife, 0, 255);
+      if(!fire2Img){
+        noStroke(); fill(255,160,255,a*0.6); circle(this.x,this.y, 48*this.scale);
+        return;
+      }
+      const baseW = Math.min(dw(420), width*0.60) * this.scale;
+      const baseH = baseW * (fire2Img.height / fire2Img.width);
+      push();
+      translate(this.x, this.y);
+      rotate(this.angle); // fire2 faces right
+      imageMode(CENTER);
+      tint(255,255,255, a);
+      image(fire2Img, 0, 0, baseW, baseH);
+      noTint();
+      pop();
+    }
   }
 
   function fireShot(){
@@ -1164,10 +1246,14 @@
     if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
     projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y));
 
-    // Fire/reload only during "true shots" late game
+    // Fire is priority; reload is throttled so it doesn't spam
     if(takeShotToken()){
       playFromPool(sfxFirePool, "fire", SFX.fire);
-      playFromPool(sfxReloadPool, "reload", SFX.reload);
+      const now = performance.now();
+      if(now - lastReloadSfxMs > RELOAD_SFX_COOLDOWN_MS && random() < 0.35){
+        lastReloadSfxMs = now;
+        playFromPool(sfxReloadPool, "reload", SFX.reload);
+      }
     }
 
     zorb.recoil = 1.0;
@@ -1198,6 +1284,10 @@
     for(let i=particles.length-1;i>=0;i--){
       particles[i].update();
       if(particles[i].dead) particles.splice(i,1);
+    }
+    for(let i=bursts.length-1;i>=0;i--){
+      bursts[i].update();
+      if(bursts[i].dead) bursts.splice(i,1);
     }
 
     // tension loop late game
@@ -1331,6 +1421,7 @@
 
     for(const b of players) b.draw();
     for(const pt of particles) pt.draw();
+    for(const bx of bursts) bx.draw();
     for(const p of projectiles) p.draw();
 
     drawSoftCeilingFade();
@@ -1607,12 +1698,12 @@
       const A = bubbleBounds();
       const rem = totalRemaining();
       const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
-      const eff = this.r * CFG.bubbleDrawScale + CFG.bubbleEdgePad + (useGlowSprite ? CFG.glowExtraPad : 0);
+      const ex = bubbleSpriteExtents(this.r, useGlowSprite);
 
-      if(this.x < A.L + eff){ this.x=A.L + eff; this.v.x*=-1; }
-      if(this.x > A.R - eff){ this.x=A.R - eff; this.v.x*=-1; }
-      if(this.y < A.T + eff){ this.y=A.T + eff; this.v.y*=-1; }
-      if(this.y > A.B - eff){ this.y=A.B - eff; this.v.y*=-1; }
+      if(this.x < A.L + ex.left){ this.x=A.L + ex.left; this.v.x*=-1; }
+      if(this.x > A.R - ex.right){ this.x=A.R - ex.right; this.v.x*=-1; }
+      if(this.y < A.T + ex.top){ this.y=A.T + ex.top; this.v.y*=-1; }
+      if(this.y > A.B - ex.bottom){ this.y=A.B - ex.bottom; this.v.y*=-1; }
 
       this.v.mult(CFG.bounceDamping);
     }
@@ -1697,29 +1788,55 @@
       this.v=createVector(vx,vy);
       this.r=CFG.projectileRadius;
       this.dead=false;
+
+      this.cosmetic = false;
+      this.ttl = 1.2; // seconds (used for cosmetic + offscreen safety)
+      this.angle = this.v.heading();
     }
     update(dt){
       this.x += this.v.x;
       this.y += this.v.y;
+      this.angle = this.v.heading();
+      this.ttl -= dt;
+      if(this.ttl <= 0){ this.dead = true; return; }
 
-      if(this.y > height+120 || this.x < -120 || this.x > width+120){
+      if(this.y > height+140 || this.x < -140 || this.x > width+140){
         this.dead=true; return;
       }
+
+      if(this.cosmetic) return;
 
       for(let i=players.length-1;i>=0;i--){
         const b=players[i];
         const dx=this.x-b.x, dy=this.y-b.y;
         if(dx*dx+dy*dy < (b.r + this.r)*(b.r + this.r)){
+          const ang = this.angle; // use shot direction for the burst
           eliminateAtIndex(i);
+          bursts.push(new Burst(b.x, b.y, ang, 11, (totalRemaining()<=20?1.05:0.90)));
           this.dead=true;
           break;
         }
       }
     }
     draw(){
-      noStroke();
-      fill(255,120,0,40); circle(this.x,this.y,this.r*3.6);
-      fill(255,240,120,220); circle(this.x,this.y,this.r*1.6);
+      // fire1 faces top-right (45deg); rotate so it matches travel direction
+      if(fire1Img){
+        const baseW = Math.max(dw(46), this.r*7.2);
+        const baseH = baseW * (fire1Img.height / fire1Img.width);
+        const rot = this.angle - Math.PI/4;
+        push();
+        translate(this.x, this.y);
+        rotate(rot);
+        imageMode(CENTER);
+        tint(255,255,255, this.cosmetic ? 210 : 255);
+        image(fire1Img, 0, 0, baseW, baseH);
+        noTint();
+        pop();
+      }else{
+        noStroke();
+        fill(255,120,0,40); circle(this.x,this.y,this.r*3.6);
+        fill(255,240,120,220); circle(this.x,this.y,this.r*1.6);
+      }
     }
   }
 
