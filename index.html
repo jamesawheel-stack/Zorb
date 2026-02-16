@@ -252,66 +252,62 @@
     cellSize: 140,
     recycleModeThreshold: 160,
     repositionAttempts: 18,
+    maxProjectiles: 60,          // safety cap
   };
 
   const BATTLE_TIME_CAP_SEC = 30;
   const DIRECT_POP_THRESHOLD = 90;
   let elimBudget = 0;
 
-  // Audio throttles
-  let lastPopSfxMs=0, lastFireSfxMs=0, lastBassSfxMs=0, lastWooshSfxMs=0, lastReloadSfxMs=0;
-  const POP_SFX_COOLDOWN_MS   = 55;
-  const FIRE_SFX_COOLDOWN_MS  = 160;
-  const BASS_SFX_COOLDOWN_MS  = 110;
+  // Audio throttles (burst-level, NOT per bubble)
+  let lastBurstSfxMs = 0;
+  const BURST_SFX_COOLDOWN_MS = 90;   // 1 sound per burst
+  let lastWooshSfxMs=0;
   const WOOSH_SFX_COOLDOWN_MS = 120;
-  const RELOAD_SFX_COOLDOWN_MS= 220;
 
   // Token-budgets (prevents p5.sound scheduling churn on huge rounds)
   let popTokens = 0, shotTokens = 0;
   function popTokenRate(rem){
-    if(rem >= 2500) return 3.5;   // very light
-    if(rem >= 1200) return 5.0;
-    if(rem >= 600)  return 7.0;
-    if(rem >= 250)  return 10.0;
-    return 14.0;
+    if(rem >= 2500) return 2.6;
+    if(rem >= 1200) return 3.8;
+    if(rem >= 600)  return 5.0;
+    if(rem >= 250)  return 7.0;
+    return 10.0;
   }
   function shotTokenRate(rem){
-    if(rem >= 2500) return 5.5;   // prioritize fire/reload
-    if(rem >= 1200) return 7.5;
-    if(rem >= 600)  return 9.0;
-    if(rem >= 250)  return 11.0;
-    return 14.0;
+    if(rem >= 2500) return 3.2;
+    if(rem >= 1200) return 4.2;
+    if(rem >= 600)  return 6.0;
+    if(rem >= 250)  return 8.0;
+    return 10.0;
   }
   function refillSfxTokens(dt, rem){
-    popTokens  = Math.min(12, popTokens  + popTokenRate(rem)  * dt);
-    shotTokens = Math.min(12, shotTokens + shotTokenRate(rem) * dt);
+    popTokens  = Math.min(10, popTokens  + popTokenRate(rem)  * dt);
+    shotTokens = Math.min(10, shotTokens + shotTokenRate(rem) * dt);
   }
   function takePopToken(){ if(popTokens >= 1){ popTokens -= 1; return true; } return false; }
   function takeShotToken(){ if(shotTokens >= 1){ shotTokens -= 1; return true; } return false; }
 
   let zorbImg, zorbLoaded=false;
-  let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
+  let uiFrameImg=null, winnerFrameImg=null, bgImg=null, bgGlowImg=null;
   let bubbleImg=null, glowImg=null;
   let spritesOk=false;
 
   let audioUnlocked=false;
   let musicMuted=false;
 
-  // Pools (avoid stop()/restart thrash on a single SoundFile)
+  // Pools
   const AUDIO_POOL_N = 4;
   let sfxPop=[], sfxWinner=null, sfxMusic=null, sfxTension=null;
-
   let sfxFirePool=[], sfxReloadPool=[], sfxBassPool=[], sfxWooshPool=[];
   let _fireIdx=0, _reloadIdx=0, _bassIdx=0, _wooshIdx=0;
-
-  let sfxFire=null, sfxReload=null, sfxBass=null, sfxWoosh=null;
 
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
   let musicStarted=false;
   let musicRestartTimer=null, musicStopTimer=null;
 
-  const SFX={ master:0.90, pop:0.65, fire:0.70, reload:0.38, bass:0.70, woosh:0.55, tensionMax:0.55, winner:0.95 };
-  const MUSIC = { bed:0.18, fadeInMs:900 };
+  const SFX={ master:0.90, pop:0.70, fire:0.70, reload:0.38, bass:0.82, woosh:0.55, tensionMax:0.55, winner:0.95 };
+  const MUSIC = { bed:0.18, fadeInMs:900, duckLevel:0.05, duckMs:900 };
 
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[];
@@ -337,6 +333,11 @@
 
   let accumMs = 0;
   const FIXED_DT_MS = 1000 / PERF.physicsHz;
+
+  // Finale glow pulse
+  let finalePulseT = 0;
+  const MILESTONES = [2500, 1200, 600, 250, 120, 70, 35, 20, 10, 5];
+  const hitMilestones = new Set();
 
   function totalRemaining(){ return Math.max(0, REMAINING_TOTAL || 0); }
 
@@ -417,6 +418,8 @@
         sfxTension.play();
       }catch(_){}
     }
+
+    // Constant atmosphere: start music once, keep looping.
     if(!musicMuted) startMusicSoft();
     updatePanelStatusThrottled(true);
   }
@@ -434,7 +437,20 @@
     }catch(e){ console.warn("music start failed", e); }
   }
 
+  function duckMusic(){
+    if(!sfxMusic || !audioUnlocked) return;
+    try{
+      sfxMusic.amp(MUSIC.duckLevel, 0.08);
+      if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
+      musicRestartTimer = setTimeout(()=>{
+        try{ sfxMusic.amp(MUSIC.bed, 0.25); }catch(_){}
+        musicRestartTimer = null;
+      }, MUSIC.duckMs);
+    }catch(_){}
+  }
+
   function stopMusicSoft(){
+    // kept for mute/reset only
     if(!sfxMusic) return;
     if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
     if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
@@ -460,7 +476,6 @@
   function playOne(snd, vol){
     if(!audioUnlocked || !snd) return;
     try{
-      // winner/music/tension are singletons; stopping here is fine
       if(snd.isPlaying && snd.isPlaying()) snd.stop();
       snd.amp(SFX.master * vol, 0);
       snd.play();
@@ -482,9 +497,6 @@
       else _wooshIdx++;
 
       if(!snd) return false;
-
-      // IMPORTANT: do NOT stop() a currently-playing instance (stop() thrashes on mobile).
-      // If it’s busy, just skip and let the next frame try again.
       if(snd.isPlaying && snd.isPlaying()) return false;
 
       snd.amp(SFX.master * vol, 0);
@@ -495,105 +507,11 @@
     }
   }
 
-  function popSfxProbability(rem){
-    if(rem >= 1500) return 0.07;  // slightly reduced to avoid the 1500 cliff
-    if(rem >= 800)  return 0.10;
-    if(rem >= 400)  return 0.16;
-    if(rem >= 200)  return 0.25;
-    if(rem >= 120)  return 0.38;
-    if(rem >= 70)   return 0.58;
-    if(rem >= 35)   return 0.80;
-    return 1.00;
-  }
-  function bassSfxProbability(rem){
-    if(rem >= 1200) return 0.07;
-    if(rem >= 600)  return 0.10;
-    if(rem >= 250)  return 0.14;
-    if(rem >= 120)  return 0.20;
-    if(rem >= 70)   return 0.28;
-    if(rem >= 35)   return 0.55;
-    return 1.00;
-  }
-  function fireSfxProbability(rem){
-    if(rem >= 2500) return 0.05;
-    if(rem >= 1200) return 0.07;
-    if(rem >= 600)  return 0.12;
-    if(rem >= 250)  return 0.20;
-    if(rem >= 120)  return 0.32;
-    if(rem >= 70)   return 0.55;
-    if(rem >= 35)   return 0.80;
-    return 1.00;
-  }
-  function reloadSfxProbability(rem){
-    if(rem >= 2500) return 0.18;
-    if(rem >= 1200) return 0.22;
-    if(rem >= 600)  return 0.30;
-    if(rem >= 250)  return 0.40;
-    if(rem >= 120)  return 0.55;
-    return 0.75;
-  }
-
-  function playRandPopThrottled(){
-    if(!audioUnlocked || !sfxPop.length) return;
-    const now = performance.now();
-    if(now - lastPopSfxMs < POP_SFX_COOLDOWN_MS) return;
-    const rem = totalRemaining();
-    if(random() > popSfxProbability(rem)) return;
-    if(!takePopToken()) return;
-
-    lastPopSfxMs = now;
-    const snd = random(sfxPop);
-    if(!snd) return;
-    try{
-      // do not stop() if playing; skip instead
-      if(snd.isPlaying && snd.isPlaying()) return;
-      snd.amp(SFX.master * SFX.pop, 0);
-      snd.play();
-    }catch(_){}
-  }
-
-  function playBassThrottled(){
-    if(!audioUnlocked || !sfxBassPool.length) return;
-    const now = performance.now();
-    if(now - lastBassSfxMs < BASS_SFX_COOLDOWN_MS) return;
-    const rem = totalRemaining();
-    if(random() > bassSfxProbability(rem)) return;
-    if(!takePopToken()) return;
-
-    lastBassSfxMs = now;
-    playFromPool(sfxBassPool, "bass", SFX.bass);
-  }
-
-  function playFireThrottled(volMul=1.0){
-    if(!audioUnlocked || !sfxFirePool.length) return;
-    const now = performance.now();
-    if(now - lastFireSfxMs < FIRE_SFX_COOLDOWN_MS) return;
-    const rem = totalRemaining();
-    if(random() > fireSfxProbability(rem)) return;
-    if(!takeShotToken()) return;
-
-    lastFireSfxMs = now;
-    playFromPool(sfxFirePool, "fire", SFX.fire * volMul);
-  }
-
-  function playReloadThrottled(volMul=1.0){
-    if(!audioUnlocked || !sfxReloadPool.length) return;
-    const now = performance.now();
-    if(now - lastReloadSfxMs < RELOAD_SFX_COOLDOWN_MS) return;
-    const rem = totalRemaining();
-    if(random() > reloadSfxProbability(rem)) return;
-    if(!takeShotToken()) return;
-
-    lastReloadSfxMs = now;
-    playFromPool(sfxReloadPool, "reload", SFX.reload * volMul);
-  }
-
   function playWooshThrottled(){
     if(!audioUnlocked || !sfxWooshPool.length) return;
     const now = performance.now();
     if(now - lastWooshSfxMs < WOOSH_SFX_COOLDOWN_MS) return;
     if(!takeShotToken()) return;
-
     lastWooshSfxMs = now;
     playFromPool(sfxWooshPool, "woosh", SFX.woosh);
   }
@@ -616,7 +534,6 @@
     try{ sfxTension?.stop(); }catch(_){}
     try{ sfxWinner?.stop(); }catch(_){}
 
-    // pooled SFX: stop each instance (only on reset, so it's fine)
     const pools = [sfxFirePool, sfxReloadPool, sfxBassPool, sfxWooshPool];
     for(const pool of pools){
       if(Array.isArray(pool)){
@@ -705,13 +622,15 @@
     zorbImg = loadImage('zorb.png', ()=>{ zorbLoaded=true; }, ()=>{ zorbLoaded=false; console.warn("zorb.png failed"); });
 
     bgImg = loadImage('background.png', ()=>{}, ()=>{ console.warn("Missing background.png"); });
+    bgGlowImg = loadImage('backgroundglow.png', ()=>{}, ()=>{ console.warn("Missing backgroundglow.png"); });
+
     uiFrameImg = loadImage('ui_frame.png', ()=>{}, ()=>{ console.warn("Missing ui_frame.png"); });
     winnerFrameImg = loadImage('winnerframe.png', ()=>{}, ()=>{ console.warn("Missing winnerframe.png"); });
 
     bubbleImg = loadImage('bubble.png', ()=>{}, ()=>{ console.warn("Missing bubble.png"); });
     glowImg   = loadImage('bubbleglow.png', ()=>{}, ()=>{ console.warn("Missing bubbleglow.png"); });
 
-    // pooled "shot" sounds (fire + reload) and accents
+    // pooled SFX (avoid stop/restart thrash)
     sfxFirePool   = [];
     sfxReloadPool = [];
     sfxBassPool   = [];
@@ -722,11 +641,6 @@
       sfxBassPool.push(loadSound('bass.wav',   ()=>{}, ()=>console.warn("Missing bass.wav")));
       sfxWooshPool.push(loadSound('woosh.wav', ()=>{}, ()=>console.warn("Missing woosh.wav")));
     }
-    // keep single refs for status/compat
-    sfxFire   = sfxFirePool[0] || null;
-    sfxReload = sfxReloadPool[0] || null;
-    sfxBass   = sfxBassPool[0] || null;
-    sfxWoosh  = sfxWooshPool[0] || null;
 
     sfxWinner = loadSound('winner.mp3', ()=>{}, ()=>console.warn("Missing winner.mp3"));
     sfxMusic  = loadSound('music_loop.mp3', ()=>{}, ()=>console.warn("Missing music_loop.mp3"));
@@ -844,12 +758,8 @@
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
     // Audio recovery on focus/visibility for mobile browsers
-    document.addEventListener("visibilitychange", ()=>{
-      if(!document.hidden) ensureAudioAlive();
-    });
+    document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) ensureAudioAlive(); });
     window.addEventListener("focus", ensureAudioAlive);
-    document.body.addEventListener("pointerdown", ensureAudioAlive, { passive:true });
-    document.body.addEventListener("touchstart", ensureAudioAlive, { passive:true });
 
     document.body.addEventListener('click', ()=>{
       if(!panelEl.classList.contains('hidden')) return;
@@ -870,8 +780,8 @@
     if(hideTimer) clearTimeout(hideTimer);
     setUIHidden(true);
     paused = false;
-    stopMusicSoft();
 
+    // Music stays on as constant atmosphere; tension stays muted until late game.
     setTimeout(() => {
       simState = "countdown";
       const startCount = Math.max(2, ARENA_START_COUNT || 50);
@@ -981,17 +891,15 @@
 
   // PERFORMANCE: when remaining is huge, reduce pop particles aggressively
   function particleScaleForRemaining(rem){
-    if(rem >= 1200) return 0.00;  // no burst particles above 1200 (keep shots visible)
+    if(rem >= 1200) return 0.00;
     if(rem >= 600)  return 0.10;
     if(rem >= 250)  return 0.22;
     if(rem >= 120)  return 0.50;
     return 1.00;
   }
 
-  function popBubble(b){
-    playRandPopThrottled();
-    playBassThrottled();
-
+  // VISUAL ONLY (audio handled per-burst in stepFixed)
+  function popBubbleFX(b){
     if(simState==="running"){
       frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
     }
@@ -1000,7 +908,6 @@
     const m = particleScaleForRemaining(rem);
     if(m <= 0) return;
 
-    // cap particles so bursts can't grow unbounded on slow devices
     const maxParticles = (rem >= 250) ? 1600 : 4200;
     if(particles.length > maxParticles){
       particles.splice(0, particles.length - maxParticles);
@@ -1020,8 +927,53 @@
     }
   }
 
-  // Key scalability fix: while remaining is huge, we DO NOT spawn extra bubbles or manage huge lists.
-  // We keep a fixed pool and "recycle" a bubble after elimination.
+  // 1 sound per elimination burst (not per bubble)
+  function playBurstSfx(elimCount, remBefore){
+    if(!audioUnlocked) return;
+    const now = performance.now();
+    if(now - lastBurstSfxMs < BURST_SFX_COOLDOWN_MS) return;
+    if(!takePopToken()) return;
+
+    lastBurstSfxMs = now;
+
+    // choose ONE pop sound + ONE bass accent (optional) per burst
+    try{
+      const snd = random(sfxPop);
+      if(snd && !(snd.isPlaying && snd.isPlaying())){
+        snd.amp(SFX.master * SFX.pop, 0);
+        snd.play();
+      }
+    }catch(_){}
+
+    // Bass probability ramps up as it gets smaller
+    const rem = Math.max(1, remBefore);
+    const bassChance =
+      (rem <= 10) ? 1.00 :
+      (rem <= 20) ? 0.70 :
+      (rem <= 50) ? 0.40 :
+      (rem <= 120) ? 0.25 :
+      0.12;
+
+    if(random() < bassChance){
+      playFromPool(sfxBassPool, "bass", SFX.bass * (elimCount >= 4 ? 1.05 : 1.0));
+    }
+  }
+
+  // milestone accents (optional but cheap)
+  function maybePlayMilestone(remAfter){
+    for(const m of MILESTONES){
+      if(remAfter <= m && !hitMilestones.has(m)){
+        hitMilestones.add(m);
+        // single bass "thump"
+        if(audioUnlocked && takePopToken()){
+          playFromPool(sfxBassPool, "bass", SFX.bass * 1.15);
+        }
+        break;
+      }
+    }
+  }
+
+  // Key scalability: fixed pool & recycle while remaining is huge
   function eliminateAtIndex(i){
     if(players.length <= 0) return false;
 
@@ -1029,7 +981,7 @@
       const b = players[i];
       if(!b) return false;
 
-      popBubble(b);
+      popBubbleFX(b);
       REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
 
       const newId = NEXT_SPAWN_ID++;
@@ -1043,7 +995,7 @@
 
     const b = players[i];
     if(!b) return false;
-    popBubble(b);
+    popBubbleFX(b);
     REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
 
     const last = players.length - 1;
@@ -1061,11 +1013,14 @@
     accumMs = 0;
 
     elimBudget = 0;
-    lastPopSfxMs = lastFireSfxMs = lastBassSfxMs = lastWooshSfxMs = lastReloadSfxMs = 0;
+    lastBurstSfxMs = 0;
+    lastWooshSfxMs = 0;
 
-    // reset token buckets
     popTokens = 0;
     shotTokens = 0;
+
+    finalePulseT = 0;
+    hitMilestones.clear();
 
     zorb.y = height * CFG.robotY + dy(CFG.robotYOffsetDesign);
     zorb.aimX = width * 0.5;
@@ -1167,21 +1122,26 @@
     return 0.35 + 0.65 * eased;
   }
 
+  // "Burst eliminations based on remaining count"
+  function burstSizeForRemaining(rem){
+    if(rem >= 2500) return 8;
+    if(rem >= 1200) return 6;
+    if(rem >= 600)  return 4;
+    if(rem >= 250)  return 3;
+    if(rem >= 120)  return 2;
+    return 1;
+  }
+
   function fastEliminateOne(){
     if(players.length <= 1) return false;
     const victimIdx = Math.floor(random(players.length));
     const v = players[victimIdx];
     if(!v) return false;
 
+    // aim animation only (no per-elim fire/reload sounds in burst mode)
     zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
     zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
-
-    // keep shot feel, but budgeted
-    playFireThrottled(0.55);
-    playReloadThrottled(0.55);
-
-    zorb.recoil = 1.0;
-    frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*0.55));
+    zorb.recoil = 0.35;
 
     return eliminateAtIndex(victimIdx);
   }
@@ -1196,11 +1156,14 @@
     const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
     const vel = dir.mult(CFG.projectileSpeed);
 
+    if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
     projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y));
 
-    // FIRE is top priority; RELOAD is secondary accent
-    playFireThrottled(1.0);
-    playReloadThrottled(1.0);
+    // Fire/reload only during "true shots" late game
+    if(takeShotToken()){
+      playFromPool(sfxFirePool, "fire", SFX.fire);
+      playFromPool(sfxReloadPool, "reload", SFX.reload);
+    }
 
     zorb.recoil = 1.0;
     if(simState==="running"){
@@ -1212,10 +1175,10 @@
     ensureAudioAlive();
     zorb.recoil *= 0.86;
 
-    const remaining = totalRemaining();
+    const remainingBefore = totalRemaining();
 
     // refill audio budgets every sim tick
-    refillSfxTokens(dt, remaining);
+    refillSfxTokens(dt, remainingBefore);
 
     for(const b of players) b.update();
     if(players.length > 1){
@@ -1232,7 +1195,8 @@
       if(particles[i].dead) particles.splice(i,1);
     }
 
-    tensionTarget = (remaining<=5 && simState==="running") ? 1 : 0;
+    // tension loop late game
+    tensionTarget = (remainingBefore<=10 && simState==="running") ? 1 : 0;
     tensionVol = lerp(tensionVol, tensionTarget, 0.02);
     if(audioUnlocked && sfxTension){
       try{ sfxTension.amp(SFX.master*SFX.tensionMax*tensionVol, 0.05); }catch(_){}
@@ -1243,22 +1207,27 @@
       if(countdownFrames<=0){
         simState="running";
         countdownFrames=0;
-        if(!musicMuted) startMusicSoft();
+        // music already running
       }
       return;
     }
     if(simState!=="running") return;
 
     const start = Math.max(2, ARENA_START_COUNT || 50);
-    const pps = popsPerSecondBase() * dramaMultiplier(remaining, start);
+    const pps = popsPerSecondBase() * dramaMultiplier(remainingBefore, start);
     elimBudget += pps * dt;
-    elimBudget = Math.min(elimBudget, 10);
+    elimBudget = Math.min(elimBudget, 12);
 
-    const useDirect = (remaining > DIRECT_POP_THRESHOLD);
+    const useDirect = (remainingBefore > DIRECT_POP_THRESHOLD);
+    let elimThisTick = 0;
 
-    while(elimBudget >= 1 && totalRemaining() > 1){
+    // burst eliminations (single burst SFX for the group)
+    const burstN = burstSizeForRemaining(remainingBefore);
+    const toDo = Math.min(Math.floor(elimBudget), burstN);
+
+    for(let k=0; k<toDo && totalRemaining() > 1; k++){
       if(useDirect){
-        fastEliminateOne();
+        if(fastEliminateOne()) elimThisTick++;
       }else{
         if(zorb.fireCooldown <= 0){
           const t = pickTarget();
@@ -1268,14 +1237,21 @@
           fireShot();
           zorb.fireCooldown = 0.12;
         }else{
-          fastEliminateOne();
+          if(fastEliminateOne()) elimThisTick++;
         }
       }
       elimBudget -= 1;
     }
 
+    // Burst SFX: once per tick if we eliminated anything
+    if(elimThisTick > 0){
+      playBurstSfx(elimThisTick, remainingBefore);
+      maybePlayMilestone(totalRemaining());
+    }
+
     zorb.fireCooldown = Math.max(0, zorb.fireCooldown - dt);
 
+    // Finale winner
     if(totalRemaining()===1 && players.length===1){
       if(simState !== "finished"){
         simState="finished";
@@ -1283,9 +1259,8 @@
       }
       if(!winnerPlayed){
         winnerPlayed=true;
-        stopMusicSoft();
+        duckMusic();
         playOne(sfxWinner, SFX.winner);
-        musicRestartTimer = setTimeout(()=>{ if(!musicMuted) startMusicSoft(); }, 900);
 
         (async () => {
           try { await reportWinnerToBackend(players[0]); } catch(e){ console.warn(e); }
@@ -1293,6 +1268,36 @@
         })();
       }
     }
+
+    // pulse time for glow overlay
+    if(totalRemaining() <= 10 && simState==="running"){
+      const rem = Math.max(1, totalRemaining());
+      const speed = (rem <= 5) ? 0.018 : 0.010; // faster for final 5
+      finalePulseT += speed;
+    }else{
+      finalePulseT *= 0.98;
+    }
+  }
+
+  function drawFinaleGlowOverlay(){
+    if(!bgGlowImg) return;
+    const rem = totalRemaining();
+    if(!(simState==="running" || simState==="finished")) return;
+    if(rem > 10) return;
+
+    // dramatic pulse: stronger as it gets smaller
+    const t = finalePulseT;
+    const pulse = 0.5 + 0.5*Math.sin(t * 2.0);
+    const strength = (rem <= 5) ? (0.45 + pulse*0.40) : (0.25 + pulse*0.25);
+    const alpha = 255 * constrain(strength, 0, 0.95);
+
+    push();
+    blendMode(SCREEN);   // brightens without muddying
+    tint(255, 255, 255, alpha);
+    image(bgGlowImg, 0, 0, width, height);
+    blendMode(BLEND);
+    noTint();
+    pop();
   }
 
   function render(){
@@ -1302,6 +1307,10 @@
 
     background(CFG.bgColor);
     if (bgImg) image(bgImg, 0, 0, width, height);
+
+    // NEW: dramatic pulsing overlay for final 10 (especially final 5)
+    drawFinaleGlowOverlay();
+
     if(CFG.vignette) drawVignette();
 
     let sx=0, sy=0;
