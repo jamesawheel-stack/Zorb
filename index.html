@@ -135,6 +135,7 @@
         <option value="500">OFFLINE: 500</option>
         <option value="1000">OFFLINE: 1000</option>
         <option value="2500">OFFLINE: 2500</option>
+        <option value="5000">OFFLINE: 5000</option>
       </select>
     </div>
     <div class="status">
@@ -179,16 +180,8 @@
   function dw(w){ return w * (width / DESIGN.w); }
   function dh(h){ return h * (height / DESIGN.h); }
 
-  const UI_FRAME = {
-    w: 1024,
-    h: 1536,
-    innerL: 160,
-    innerR: 863,
-    innerT: 218,
-    innerB: 1389,
-  };
-
-  const FRAME_PAD_PX = { l: 0, r: 0, t: 0, b: 0 };
+  const UI_FRAME = { w:1024, h:1536, innerL:160, innerR:863, innerT:218, innerB:1389 };
+  const FRAME_PAD_PX = { l:0, r:0, t:0, b:0 };
 
   const CFG = {
     aspectW:9, aspectH:16,
@@ -197,7 +190,6 @@
     vignette:true,
 
     bubbleCeilingDesignY: 640,
-
     bubbleAreaInsetDesign: { left: 18, right: 18, top: 6, bottom: 92 },
 
     wanderForce:0.18,
@@ -219,13 +211,9 @@
     cannonXFrac:[0.34,0.50,0.66],
     cannonYFrac:0.65,
 
-    chargeTime:10,
     aimJitter:16,
     projectileSpeed:16,
     projectileRadius:10,
-
-    multiElimChance:0.08,
-    ricochetChance:0.06,
 
     screenShakePop:3.2,
     screenShakeShot:0.9,
@@ -235,8 +223,6 @@
     popParticles:12,
     popLife:20,
     sparkLife:12,
-
-    countdownSec:3,
 
     namesFadeStartN: 55,
     namesFadeFullN:  20,
@@ -259,18 +245,25 @@
     winnerNameCenterXDesign: 540,
   };
 
+  // SCALE: fixed sim bubble count, recycle while remaining is huge
   const PERF = {
     maxSimBubbles: 160,
     physicsHz: 30,
     cellSize: 140,
+    recycleModeThreshold: 160,
+    repositionAttempts: 18,
   };
 
   const BATTLE_TIME_CAP_SEC = 30;
   const DIRECT_POP_THRESHOLD = 90;
   let elimBudget = 0;
 
-  let lastPopSfxMs = 0;
-  const POP_SFX_COOLDOWN_MS = 55;
+  // Audio throttles (so 2500+ doesn't pile up scheduling and mixer work)
+  let lastPopSfxMs=0, lastFireSfxMs=0, lastBassSfxMs=0, lastWooshSfxMs=0;
+  const POP_SFX_COOLDOWN_MS  = 55;
+  const FIRE_SFX_COOLDOWN_MS = 160;
+  const BASS_SFX_COOLDOWN_MS = 110;
+  const WOOSH_SFX_COOLDOWN_MS= 120;
 
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null;
@@ -282,10 +275,7 @@
   let sfxPop=[], sfxWinner=null, sfxReload=null, sfxFire=null, sfxBass=null, sfxWoosh=null, sfxTension=null, sfxMusic=null;
   let tensionTarget=0, tensionVol=0, winnerPlayed=false;
   let musicStarted=false;
-
-  // AUDIO FIXES
-  let musicRestartTimer = null;   // winner->resume
-  let musicStopTimer = null;      // stop cleanup
+  let musicRestartTimer=null, musicStopTimer=null;
 
   const SFX={ master:0.90, pop:0.65, fire:0.70, reload:0.45, bass:0.75, woosh:0.55, tensionMax:0.55, winner:0.95 };
   const MUSIC = { bed:0.18, fadeInMs:900 };
@@ -299,8 +289,9 @@
 
   let ARENA_START_COUNT=0;
   let REMAINING_TOTAL=0;
+  let NEXT_SPAWN_ID=1;
 
-  let zorb={ y:0, aimX:0, aimY:0, charge:0, recoil:0, fireCooldown:0, aimMeta:null };
+  let zorb={ y:0, aimX:0, aimY:0, recoil:0, fireCooldown:0, aimMeta:null };
 
   let winnerMomentFrames = 0;
   const WINNER_MOMENT_LEN = 54;
@@ -354,34 +345,29 @@
 
   function drawSoftCeilingFade(){
     const B = bubbleBounds();
-
     const ctx = drawingContext;
     ctx.save();
-
     const fadeH = Math.floor(dy(110));
     const lift  = Math.floor(dy(55));
     const yTop  = Math.floor(B.T - lift);
     const yBot  = Math.floor(B.T + fadeH);
-
     const g = ctx.createLinearGradient(0, yTop, 0, yBot);
     g.addColorStop(0.00, "rgba(11,15,31,0.00)");
     g.addColorStop(0.25, "rgba(11,15,31,0.22)");
     g.addColorStop(0.55, "rgba(11,15,31,0.10)");
     g.addColorStop(1.00, "rgba(11,15,31,0.00)");
-
     ctx.fillStyle = g;
     ctx.fillRect(Math.floor(B.L), yTop, Math.ceil(B.W), (yBot - yTop));
-
     ctx.restore();
   }
 
-  function getDynamicBubbleSize(count){
-    if(count<=5)   return {min:34,max:46};
-    if(count<=10)  return {min:36,max:52};
-    if(count<=20)  return {min:38,max:56};
-    if(count<=40)  return {min:42,max:62};
-    if(count<=60)  return {min:40,max:58};
-    if(count<=100) return {min:22,max:34};
+  function getDynamicBubbleSize(n){
+    if(n<=5)   return {min:34,max:46};
+    if(n<=10)  return {min:36,max:52};
+    if(n<=20)  return {min:38,max:56};
+    if(n<=40)  return {min:42,max:62};
+    if(n<=60)  return {min:40,max:58};
+    if(n<=100) return {min:22,max:34};
     return {min:16,max:22};
   }
 
@@ -417,10 +403,8 @@
 
   function stopMusicSoft(){
     if(!sfxMusic) return;
-
     if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
     if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
-
     try{
       sfxMusic.amp(0, 0.18);
       musicStopTimer = setTimeout(()=>{
@@ -466,15 +450,23 @@
     if(rem >= 35)  return 0.55;
     return 1.00;
   }
+  function fireSfxProbability(rem){
+    if(rem >= 2500) return 0.04;
+    if(rem >= 1200) return 0.06;
+    if(rem >= 600)  return 0.10;
+    if(rem >= 250)  return 0.18;
+    if(rem >= 120)  return 0.30;
+    if(rem >= 70)   return 0.55;
+    if(rem >= 35)   return 0.80;
+    return 1.00;
+  }
 
   function playRandPopThrottled(){
     if(!audioUnlocked || !sfxPop.length) return;
     const now = performance.now();
     if(now - lastPopSfxMs < POP_SFX_COOLDOWN_MS) return;
-
     const rem = totalRemaining();
     if(random() > popSfxProbability(rem)) return;
-
     lastPopSfxMs = now;
     const snd = random(sfxPop);
     if(!snd) return;
@@ -487,28 +479,45 @@
 
   function playBassThrottled(){
     if(!audioUnlocked || !sfxBass) return;
+    const now = performance.now();
+    if(now - lastBassSfxMs < BASS_SFX_COOLDOWN_MS) return;
     const rem = totalRemaining();
     if(random() > bassSfxProbability(rem)) return;
+    lastBassSfxMs = now;
     playOne(sfxBass, SFX.bass);
   }
 
-  // AUDIO: resume context only on events
+  function playFireThrottled(volMul=1.0){
+    if(!audioUnlocked || !sfxFire) return;
+    const now = performance.now();
+    if(now - lastFireSfxMs < FIRE_SFX_COOLDOWN_MS) return;
+    const rem = totalRemaining();
+    if(random() > fireSfxProbability(rem)) return;
+    lastFireSfxMs = now;
+    playOne(sfxFire, SFX.fire * volMul);
+  }
+
+  function playWooshThrottled(){
+    if(!audioUnlocked || !sfxWoosh) return;
+    const now = performance.now();
+    if(now - lastWooshSfxMs < WOOSH_SFX_COOLDOWN_MS) return;
+    lastWooshSfxMs = now;
+    playOne(sfxWoosh, SFX.woosh);
+  }
+
   function ensureAudioAlive(){
     if(!audioUnlocked) return;
     const ctx = (typeof getAudioContext === "function") ? getAudioContext() : null;
-    if(ctx && ctx.state === 'suspended'){
+    if(ctx && ctx.state === "suspended"){
       try{ ctx.resume(); }catch(_){}
     }
   }
 
-  // AUDIO: hard stop everything for clean reset/restart
+  // Hard reset of all audio on sim reset so nothing keeps piling up.
   function stopAllAudio(){
     if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
     if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
-
-    tensionTarget = 0;
-    tensionVol = 0;
-
+    tensionTarget = 0; tensionVol = 0;
     try{ sfxMusic?.stop(); }catch(_){}
     try{ sfxTension?.stop(); }catch(_){}
     try{ sfxWinner?.stop(); }catch(_){}
@@ -517,9 +526,8 @@
     try{ sfxWoosh?.stop(); }catch(_){}
     try{ sfxBass?.stop(); }catch(_){}
     if(Array.isArray(sfxPop)){
-      for(const s of sfxPop){ try{ s?.stop(); }catch(_){} }
+      for(const s of sfxPop){ try{ s?.stop(); }catch(_){ } }
     }
-
     musicStarted = false;
     winnerPlayed = false;
   }
@@ -542,7 +550,7 @@
     if(!USE_BACKEND){
       BACKEND_OK = false;
       BACKEND_WINNER = null;
-      const finalCount = Math.max(2, Math.min(5000, Number(OFFLINE_COUNT||250)));
+      const finalCount = Math.max(2, Math.min(5000000, Number(OFFLINE_COUNT||250)));
       rosterHandles = Array.from({length: finalCount}, (_,i)=> ("player"+(i+1)));
       rosterHandles = rosterHandles.filter(h => !isDisallowedHandle(h));
       ROUND_META = { round_date: new Date().toISOString().slice(0,10), round_number:2, mode:"offline", finale_count:finalCount };
@@ -723,11 +731,13 @@
     document.body.addEventListener('touchstart', gesture, { passive:true });
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
-    // AUDIO: resume context only when appropriate
-    document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) ensureAudioAlive(); });
-    window.addEventListener('focus', ensureAudioAlive);
-    document.body.addEventListener('pointerdown', ensureAudioAlive, { passive:true });
-    document.body.addEventListener('touchstart', ensureAudioAlive, { passive:true });
+    // Audio recovery on focus/visibility for mobile browsers
+    document.addEventListener("visibilitychange", ()=>{
+      if(!document.hidden) ensureAudioAlive();
+    });
+    window.addEventListener("focus", ensureAudioAlive);
+    document.body.addEventListener("pointerdown", ensureAudioAlive, { passive:true });
+    document.body.addEventListener("touchstart", ensureAudioAlive, { passive:true });
 
     document.body.addEventListener('click', ()=>{
       if(!panelEl.classList.contains('hidden')) return;
@@ -793,70 +803,6 @@
     return rosterHandles[idx] || rosterHandles[nextId-1] || ("player" + nextId);
   }
 
-  function spawnOneBubble(nextId){
-    const A = bubbleBounds();
-    const size = getDynamicBubbleSize(Math.min(players.length+1, PERF.maxSimBubbles));
-    const r = random(size.min, size.max);
-
-    let x = width*0.5, y=height*0.6;
-    for(let attempt=0; attempt<140; attempt++){
-      x = random(A.L+r, A.R-r);
-      y = random(A.T+r, A.B-r);
-      let ok=true;
-      for(const other of players){
-        const dx0=x-other.x, dy0=y-other.y;
-        if(dx0*dx0 + dy0*dy0 < (r + other.r + 10)*(r+other.r+10)){ ok=false; break; }
-      }
-      if(ok) break;
-    }
-
-    const handle = getHandleForSpawn(nextId);
-    players.push(new Bubble(nextId, handle, x, y, r, random()));
-  }
-
-  function refillIfNeeded(){
-    const targetSim = Math.min(PERF.maxSimBubbles, REMAINING_TOTAL);
-    while(players.length < targetSim){
-      const nextId = (players.length ? (players[players.length-1].id + 1) : 1);
-      spawnOneBubble(nextId);
-    }
-  }
-
-  function resetSim(keepSetupState){
-    // AUDIO: ensure restart is always clean
-    stopAllAudio();
-
-    players=[]; projectiles=[]; particles=[]; frameShake=0;
-    paused=false; winnerPlayed=false;
-    winnerMomentFrames = 0;
-    accumMs = 0;
-
-    elimBudget = 0;
-    lastPopSfxMs = 0;
-
-    zorb.y = height * CFG.robotY + dy(CFG.robotYOffsetDesign);
-    zorb.aimX = width * 0.5;
-    zorb.aimY = height * 0.5;
-    zorb.recoil = 0;
-    zorb.fireCooldown = 0;
-
-    simState = keepSetupState ? "setup" : simState;
-    countdownFrames = 0;
-
-    const finalCount = USE_BACKEND
-      ? Math.max(1, Math.min(5000, Number(ROUND_META?.finale_count||rosterHandles.length||50)))
-      : Math.max(1, Number(OFFLINE_COUNT||250));
-
-    ARENA_START_COUNT = finalCount;
-    REMAINING_TOTAL = finalCount;
-
-    const simCount = Math.min(finalCount, PERF.maxSimBubbles);
-    for(let i=0;i<simCount;i++) spawnOneBubble(i+1);
-
-    updatePanelStatusThrottled(true);
-    updateHudThrottled(true);
-  }
-
   function getRobotX(){
     const sway = Math.sin(frameCount*CFG.robotSwaySpeedX) * (width*CFG.robotSwayFracX);
     const x = width*0.5 + sway;
@@ -868,16 +814,163 @@
   function cannonOrigins(){
     const robotX = getRobotX();
     const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
-
     const sx = CFG.robotScale;
     const imgW = (zorbLoaded && zorbImg) ? zorbImg.width*sx : 320*sx;
     const imgH = (zorbLoaded && zorbImg) ? zorbImg.height*sx : 320*sx;
-
     const left = robotX - imgW*0.5;
     const top  = (zorb.y + hoverY) - imgH*0.5;
-
     const y = top + imgH*CFG.cannonYFrac;
     return CFG.cannonXFrac.map(fr => ({ x: left + imgW*fr, y }));
+  }
+
+  function createInitialPositionsGrid(count){
+    const A = bubbleBounds();
+    const cols = Math.max(8, Math.floor(Math.sqrt(count) * 1.25));
+    const rows = Math.max(8, Math.ceil(count / cols));
+    const cellW = A.W / cols;
+    const cellH = A.H / rows;
+
+    const pts = [];
+    for(let r=0; r<rows; r++){
+      for(let c=0; c<cols; c++){
+        if(pts.length >= count) break;
+        const x = A.L + cellW*(c+0.5) + random(-cellW*0.18, cellW*0.18);
+        const y = A.T + cellH*(r+0.5) + random(-cellH*0.18, cellH*0.18);
+        pts.push({x, y});
+      }
+      if(pts.length >= count) break;
+    }
+    for(let i=pts.length-1;i>0;i--){
+      const j = Math.floor(random(i+1));
+      const tmp = pts[i]; pts[i]=pts[j]; pts[j]=tmp;
+    }
+    return pts;
+  }
+
+  function spawnBubbleAt(nextId, x, y){
+    const effectiveN = Math.min(totalRemaining(), players.length || PERF.maxSimBubbles);
+    const size = getDynamicBubbleSize(effectiveN);
+    const r = random(size.min, size.max);
+    const handle = getHandleForSpawn(nextId);
+    players.push(new Bubble(nextId, handle, x, y, r, random()));
+  }
+
+  function repositionBubble(b){
+    const A = bubbleBounds();
+    const r = b.r;
+    for(let k=0;k<PERF.repositionAttempts;k++){
+      b.x = random(A.L+r, A.R-r);
+      b.y = random(A.T+r, A.B-r);
+      if(k >= 4 && random() < 0.35) break;
+    }
+    b.v = createVector(random(-1,1), random(-1,1)).mult(random(0.6,1.6));
+    b.noT = random(999);
+  }
+
+  function particleScaleForRemaining(rem){
+    if(rem >= 2500) return 0.15;
+    if(rem >= 1200) return 0.22;
+    if(rem >= 600)  return 0.30;
+    if(rem >= 250)  return 0.42;
+    if(rem >= 120)  return 0.60;
+    return 1.00;
+  }
+
+  function popBubble(b){
+    playRandPopThrottled();
+    playBassThrottled();
+
+    if(simState==="running"){
+      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
+    }
+
+    const rem = totalRemaining();
+    const m = particleScaleForRemaining(rem);
+    const sparks = Math.max(1, Math.floor(CFG.popParticles * m));
+    const pops   = Math.max(1, Math.floor(6 * m));
+
+    for(let i=0;i<sparks;i++){
+      const v=p5.Vector.random2D().mult(random(2.0,6.2));
+      v.y += 0.9;
+      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.sparkLife,'spark'));
+    }
+    for(let i=0;i<pops;i++){
+      const v=p5.Vector.random2D().mult(random(1.0,4.6));
+      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.popLife,'pop'));
+    }
+  }
+
+  // Key scalability fix: while remaining is huge, we DO NOT spawn extra bubbles or manage huge lists.
+  // We keep a fixed pool and "recycle" a bubble after elimination.
+  function eliminateAtIndex(i){
+    if(players.length <= 0) return false;
+
+    if(REMAINING_TOTAL > PERF.recycleModeThreshold){
+      const b = players[i];
+      if(!b) return false;
+
+      popBubble(b);
+      REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
+
+      const newId = NEXT_SPAWN_ID++;
+      b.id = newId;
+      b.handle = getHandleForSpawn(newId);
+      b.label = b.handle ? ("@"+b.handle) : ("#"+b.id);
+      b.rSeed = random();
+      repositionBubble(b);
+      return true;
+    }
+
+    const b = players[i];
+    if(!b) return false;
+    popBubble(b);
+    REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
+
+    const last = players.length - 1;
+    if(i !== last) players[i] = players[last];
+    players.pop();
+    return true;
+  }
+
+  function resetSim(keepSetupState){
+    // audio cleanup matters most when you hammer resets after huge rounds
+    stopAllAudio();
+
+    players=[]; projectiles=[]; particles=[]; frameShake=0;
+    paused=false; winnerPlayed=false;
+    winnerMomentFrames = 0;
+    accumMs = 0;
+
+    elimBudget = 0;
+    lastPopSfxMs = lastFireSfxMs = lastBassSfxMs = lastWooshSfxMs = 0;
+
+    zorb.y = height * CFG.robotY + dy(CFG.robotYOffsetDesign);
+    zorb.aimX = width * 0.5;
+    zorb.aimY = height * 0.5;
+    zorb.recoil = 0;
+    zorb.fireCooldown = 0;
+
+    simState = keepSetupState ? "setup" : simState;
+    countdownFrames = 0;
+
+    const finalCount = USE_BACKEND
+      ? Math.max(1, Math.min(5000000, Number(ROUND_META?.finale_count||rosterHandles.length||50)))
+      : Math.max(1, Number(OFFLINE_COUNT||250));
+
+    ARENA_START_COUNT = finalCount;
+    REMAINING_TOTAL = finalCount;
+
+    const simCount = Math.min(finalCount, PERF.maxSimBubbles);
+    NEXT_SPAWN_ID = simCount + 1;
+
+    const pts = createInitialPositionsGrid(simCount);
+    for(let i=0;i<simCount;i++){
+      const p = pts[i] || {x: width*0.5, y: height*0.6};
+      spawnBubbleAt(i+1, p.x, p.y);
+    }
+
+    updatePanelStatusThrottled(true);
+    updateHudThrottled(true);
   }
 
   function draw(){
@@ -891,7 +984,6 @@
         steps++;
       }
     }
-
     render();
     updateHudThrottled(false);
   }
@@ -911,6 +1003,7 @@
     }
     return grid;
   }
+
   function neighborPairs(grid){
     for(let i=0;i<players.length;i++){
       const a = players[i];
@@ -951,16 +1044,6 @@
     return 0.35 + 0.65 * eased;
   }
 
-  function popBubbleAndRemoveAtIndex(i){
-    const b = players[i];
-    if(!b) return false;
-    popBubble(b);
-    players.splice(i,1);
-    REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
-    if(REMAINING_TOTAL > players.length) refillIfNeeded();
-    return true;
-  }
-
   function fastEliminateOne(){
     if(players.length <= 1) return false;
     const victimIdx = Math.floor(random(players.length));
@@ -970,14 +1053,34 @@
     zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
     zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
 
-    playOne(sfxFire, SFX.fire * 0.55);
+    playFireThrottled(0.55);
     zorb.recoil = 1.0;
     frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*0.55));
 
-    return popBubbleAndRemoveAtIndex(victimIdx);
+    return eliminateAtIndex(victimIdx);
+  }
+
+  function pickTarget(){
+    const b = players.length ? random(players) : null;
+    return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6 };
+  }
+
+  function fireShot(){
+    const origin = random(cannonOrigins());
+    const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
+    const vel = dir.mult(CFG.projectileSpeed);
+
+    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y));
+    playFireThrottled(1.0);
+
+    zorb.recoil = 1.0;
+    if(simState==="running"){
+      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8)));
+    }
   }
 
   function stepFixed(dt){
+    ensureAudioAlive();
     zorb.recoil *= 0.86;
 
     for(const b of players) b.update();
@@ -1015,7 +1118,6 @@
 
     const start = Math.max(2, ARENA_START_COUNT || 50);
     const pps = popsPerSecondBase() * dramaMultiplier(remaining, start);
-
     elimBudget += pps * dt;
     elimBudget = Math.min(elimBudget, 10);
 
@@ -1050,8 +1152,6 @@
         winnerPlayed=true;
         stopMusicSoft();
         playOne(sfxWinner, SFX.winner);
-
-        // AUDIO: store timer so reset can cancel it
         musicRestartTimer = setTimeout(()=>{ if(!musicMuted) startMusicSoft(); }, 900);
 
         (async () => {
@@ -1062,28 +1162,8 @@
     }
   }
 
-  function pickTarget(){
-    const b = players.length ? random(players) : null;
-    return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6 };
-  }
-
-  function fireShot(){
-    const origin = random(cannonOrigins());
-    const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
-    const vel = dir.mult(CFG.projectileSpeed);
-
-    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y, false, false));
-
-    playOne(sfxFire, SFX.fire);
-    zorb.recoil = 1.0;
-    if(simState==="running"){
-      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8)));
-    }
-  }
-
   function render(){
     background(0);
-
     const A = frameBounds();
     clipRect(A.L, A.T, A.W, A.H);
 
@@ -1104,11 +1184,9 @@
 
     for(const b of players) b.draw();
     for(const pt of particles) pt.draw();
-
     for(const p of projectiles) p.draw();
 
     drawSoftCeilingFade();
-
     drawZorb();
     if(simState==="countdown") drawCountdown();
 
@@ -1132,6 +1210,7 @@
     if(!uiFrameImg) return;
     push(); imageMode(CORNER); image(uiFrameImg, 0, 0, width, height); pop();
   }
+
   function drawVignette(){
     noFill();
     for(let i=0;i<12;i++){
@@ -1140,30 +1219,10 @@
     }
   }
 
-  function drawTopBannerTextBoxes(){
-    const boxW = dw(CFG.bannerBoxWDesign);
-    const boxH = dh(CFG.bannerBoxHDesign);
-
-    const insetX = dx(CFG.bannerInsetXDesign);
-    const topY  = dy(CFG.bannerTopYDesign);
-
-    const leftX = insetX;
-    const rightX= width - insetX - boxW;
-
-    const n = totalRemaining();
-    const a = ARENA_START_COUNT || n;
-
-    const leftLabel = (a >= 1000) ? `${n}/${a}` : `PLAYERS ${n}/${a}`;
-
-    drawTextInBox(leftLabel, leftX, topY, boxW, boxH, "center");
-    drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "center");
-  }
-
   function drawTextInBox(str, x, y, w, h, align){
     push();
     textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
     textStyle(BOLD);
-
     const pad = Math.max(6, w*0.08);
 
     drawingContext.save();
@@ -1198,6 +1257,22 @@
     pop();
   }
 
+  function drawTopBannerTextBoxes(){
+    const boxW = dw(CFG.bannerBoxWDesign);
+    const boxH = dh(CFG.bannerBoxHDesign);
+    const insetX = dx(CFG.bannerInsetXDesign);
+    const topY  = dy(CFG.bannerTopYDesign);
+    const leftX = insetX;
+    const rightX= width - insetX - boxW;
+
+    const n = totalRemaining();
+    const a = ARENA_START_COUNT || n;
+    const leftLabel = (a >= 1000) ? `${n}/${a}` : `PLAYERS ${n}/${a}`;
+
+    drawTextInBox(leftLabel, leftX, topY, boxW, boxH, "center");
+    drawTextInBox(`ROUND ${ROUND_META?.round_number || 2}`, rightX, topY, boxW, boxH, "center");
+  }
+
   function drawZorb(){
     const robotX = getRobotX();
     const hoverY = Math.sin(frameCount*CFG.robotHoverSpeedY)*CFG.robotHoverAmpY;
@@ -1223,7 +1298,7 @@
 
     if(secLeft !== lastCountdownSec){
       lastCountdownSec = secLeft;
-      playOne(sfxWoosh, SFX.woosh);
+      playWooshThrottled();
     }
 
     noStroke();
@@ -1250,7 +1325,6 @@
   function drawWinnerMoment(b){
     const t = (WINNER_MOMENT_LEN - winnerMomentFrames) / WINNER_MOMENT_LEN;
     const popScale = 1 + 0.10 * Math.sin(Math.min(1, t) * Math.PI);
-
     const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
 
     push();
@@ -1338,51 +1412,6 @@
     unclip();
   }
 
-  function popBubble(b){
-    playRandPopThrottled();
-    playBassThrottled();
-
-    if(simState==="running"){
-      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
-    }
-
-    for(let i=0;i<CFG.popParticles;i++){
-      const v=p5.Vector.random2D().mult(random(2.0,6.2));
-      v.y += 0.9;
-      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.sparkLife,'spark'));
-    }
-    for(let i=0;i<6;i++){
-      const v=p5.Vector.random2D().mult(random(1.0,4.6));
-      particles.push(new Particle(b.x,b.y,v.x,v.y,CFG.popLife,'pop'));
-    }
-  }
-
-  function nameAlphaForRemaining(rem){
-    if(rem > CFG.namesFadeStartN) return 0;
-    if(rem <= CFG.namesFadeFullN) return 255;
-    return map(rem, CFG.namesFadeStartN, CFG.namesFadeFullN, 0, 255);
-  }
-
-  function drawFittedName(label, maxW, maxH, alpha){
-    if(alpha <= 0) return;
-    push();
-    textAlign(CENTER, CENTER);
-    textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
-
-    let ts = max(10, min(24, maxH * 0.85));
-    textSize(ts);
-    while((textWidth(label) > maxW || ts > maxH) && ts > 10){
-      ts -= 1;
-      textSize(ts);
-    }
-
-    stroke(0,0,0, min(235, alpha));
-    strokeWeight(max(3, ts * 0.22));
-    fill(255,255,255, min(250, alpha));
-    text(label, 0, 0);
-    pop();
-  }
-
   class Bubble{
     constructor(id, handle, x, y, r, rSeed=0.5){
       this.id=id;
@@ -1399,7 +1428,8 @@
     }
 
     update(){
-      const size = getDynamicBubbleSize(players.length);
+      const effectiveN = Math.min(players.length, totalRemaining());
+      const size = getDynamicBubbleSize(effectiveN);
       const targetR = lerp(size.min, size.max, this.rSeed);
       this.r = lerp(this.r, targetR, 0.08);
 
@@ -1428,7 +1458,6 @@
       this.y += this.v.y;
 
       const A = bubbleBounds();
-
       const artPad = Math.max(3, this.r * 0.12);
       const eff = this.r * CFG.bubbleDrawScale + artPad;
 
@@ -1461,10 +1490,9 @@
 
     draw(){
       const rem = totalRemaining();
-      const alpha = nameAlphaForRemaining(rem);
+      const alpha = (rem > CFG.namesFadeStartN) ? 0 : (rem <= CFG.namesFadeFullN ? 255 : map(rem, CFG.namesFadeStartN, CFG.namesFadeFullN, 0, 255));
 
       const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
-
       const sW = this.r*2 * CFG.bubbleDrawScale;
       const sH = sW * aspect;
 
@@ -1496,7 +1524,19 @@
 
         push();
         translate(0, yOff);
-        drawFittedName(this.label, maxW, maxH, alpha);
+
+        // fitted name
+        let ts = max(10, min(24, maxH * 0.85));
+        textAlign(CENTER, CENTER);
+        textFont("system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif");
+        textSize(ts);
+        while((textWidth(this.label) > maxW || ts > maxH) && ts > 10){
+          ts -= 1; textSize(ts);
+        }
+        stroke(0,0,0, min(235, alpha));
+        strokeWeight(max(3, ts * 0.22));
+        fill(255,255,255, min(250, alpha));
+        text(this.label, 0, 0);
         pop();
       }
 
@@ -1505,14 +1545,11 @@
   }
 
   class Projectile{
-    constructor(x,y,vx,vy,piercing=false,ricochet=false){
+    constructor(x,y,vx,vy){
       this.x=x; this.y=y;
       this.v=createVector(vx,vy);
       this.r=CFG.projectileRadius;
       this.dead=false;
-      this.piercing=piercing;
-      this.ricochet=ricochet;
-      this.hasRicocheted=false;
     }
     update(dt){
       this.x += this.v.x;
@@ -1526,12 +1563,7 @@
         const b=players[i];
         const dx=this.x-b.x, dy=this.y-b.y;
         if(dx*dx+dy*dy < (b.r + this.r)*(b.r + this.r)){
-          popBubble(b);
-          players.splice(i,1);
-
-          REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
-          if(REMAINING_TOTAL > players.length) refillIfNeeded();
-
+          eliminateAtIndex(i);
           this.dead=true;
           break;
         }
