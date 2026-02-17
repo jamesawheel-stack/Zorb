@@ -159,21 +159,21 @@
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/addons/p5.sound.min.js"></script>
 
   <script>
+  // ===== Backend =====
   const BACKEND_BASE =
     (location.hostname === "localhost" || location.hostname === "127.0.0.1")
       ? "http://localhost:10000"
       : "https://zorb.onrender.com";
-
   const ROUND_URL  = BACKEND_BASE + "/top50.json";
   const WINNER_URL = BACKEND_BASE + "/round/today/winner";
 
   let USE_BACKEND = true;
   let OFFLINE_COUNT = 250;
 
-  let ROUND_META = { round_date:null, mode:null, claimed_total:null, finale_count:null, status:null, seed:null, round_number:2 };
-  let BACKEND_WINNER = null;
+  let ROUND_META = { round_date:null, mode:null, finale_count:null, round_number:2 };
   let BACKEND_OK = false;
 
+  // ===== Layout =====
   const DESIGN = { w:1080, h:1920 };
   function dx(x){ return x * (width / DESIGN.w); }
   function dy(y){ return y * (height / DESIGN.h); }
@@ -196,9 +196,6 @@
     maxSpeed:2.45,
     bounceDamping:0.986,
     separationStrength:0.30,
-    swirlStrength:0.055,
-    swirlJukeChance:0.010,
-    swirlJukeForce:1.35,
 
     robotScale:0.14,
     robotY:0.20,
@@ -230,7 +227,6 @@
 
     bubbleDrawScale: 0.96,
 
-    // Sprite padding (transparent margins) in source images
     bubblePadPx: { l:46, r:40, t:24, b:36 },
     glowPadPx: 30,
 
@@ -242,36 +238,49 @@
     bubbleSpriteW: 720,
     bubbleSpriteH: 700,
     bubbleContentCenterYPx: 342,
-    bubbleLabelExtraYOffset: 0,
 
     winnerNameCenterYDesign: 840,
     winnerNameMaxWDesign:    550,
     winnerNameCenterXDesign: 540,
   };
 
-  // SCALE: fixed sim bubble count, recycle while remaining is huge
   const PERF = {
     maxSimBubbles: 160,
     physicsHz: 30,
     cellSize: 140,
     recycleModeThreshold: 160,
     repositionAttempts: 18,
-    maxProjectiles: 60,          // safety cap
+    maxProjectiles: 60,
   };
 
   const BATTLE_TIME_CAP_SEC = 30;
   const DIRECT_POP_THRESHOLD = 90;
-  let elimBudget = 0;
 
-  // Audio throttles (burst-level, NOT per bubble)
+  // ===== Audio =====
+  let audioUnlocked=false;
+  let musicMuted=false;
+  let musicStarted=false;
+
+  const AUDIO_POOL_N = 4;
+  let sfxPop=[], sfxWinner=null, sfxMusic=null, sfxTension=null;
+  let sfxFirePool=[], sfxReloadPool=[], sfxBassPool=[], sfxWooshPool=[];
+  let _fireIdx=0, _reloadIdx=0, _bassIdx=0, _wooshIdx=0;
+
+  const SFX={ master:0.90, pop:0.70, fire:0.70, reload:0.38, bass:0.82, woosh:0.55, tensionMax:0.55, winner:0.95 };
+  const MUSIC = { bed:0.18, fadeInMs:900, duckLevel:0.05, duckMs:900 };
+
+  let tensionTarget=0, tensionVol=0, winnerPlayed=false;
+  let musicRestartTimer=null, musicStopTimer=null;
+
   let lastBurstSfxMs = 0;
-  const BURST_SFX_COOLDOWN_MS = 90;   // 1 sound per burst
+  const BURST_SFX_COOLDOWN_MS = 90;
   let lastWooshSfxMs=0;
   const WOOSH_SFX_COOLDOWN_MS = 120;
   let lastReloadSfxMs=0;
-  const RELOAD_SFX_COOLDOWN_MS = 260;
+  // FIX: reload was overwhelming in big games
+  const RELOAD_SFX_COOLDOWN_MS = 700;
 
-  // Token-budgets (prevents p5.sound scheduling churn on huge rounds)
+  // Token budgets
   let popTokens = 0, shotTokens = 0;
   function popTokenRate(rem){
     if(rem >= 2500) return 2.6;
@@ -294,28 +303,13 @@
   function takePopToken(){ if(popTokens >= 1){ popTokens -= 1; return true; } return false; }
   function takeShotToken(){ if(shotTokens >= 1){ shotTokens -= 1; return true; } return false; }
 
+  // ===== Sprites =====
   let zorbImg, zorbLoaded=false;
   let uiFrameImg=null, winnerFrameImg=null, bgImg=null, bgGlowImg=null;
-  let bubbleImg=null, glowImg=null;
-  let fire1Img=null, fire2Img=null;
+  let bubbleImg=null, glowImg=null, fire1Img=null, fire2Img=null;
   let spritesOk=false;
 
-  let audioUnlocked=false;
-  let musicMuted=false;
-
-  // Pools
-  const AUDIO_POOL_N = 4;
-  let sfxPop=[], sfxWinner=null, sfxMusic=null, sfxTension=null;
-  let sfxFirePool=[], sfxReloadPool=[], sfxBassPool=[], sfxWooshPool=[];
-  let _fireIdx=0, _reloadIdx=0, _bassIdx=0, _wooshIdx=0;
-
-  let tensionTarget=0, tensionVol=0, winnerPlayed=false;
-  let musicStarted=false;
-  let musicRestartTimer=null, musicStopTimer=null;
-
-  const SFX={ master:0.90, pop:0.70, fire:0.70, reload:0.38, bass:0.82, woosh:0.55, tensionMax:0.55, winner:0.95 };
-  const MUSIC = { bed:0.18, fadeInMs:900, duckLevel:0.05, duckMs:900 };
-
+  // ===== Game state =====
   let rosterHandles=[];
   let players=[], projectiles=[], particles=[], bursts=[];
   let paused=false;
@@ -327,24 +321,23 @@
   let REMAINING_TOTAL=0;
   let NEXT_SPAWN_ID=1;
 
+  let elimBudget = 0;
+  let accumMs = 0;
+  const FIXED_DT_MS = 1000 / PERF.physicsHz;
+
   let zorb={ y:0, aimX:0, aimY:0, recoil:0, fireCooldown:0, aimMeta:null };
 
   let winnerMomentFrames = 0;
   const WINNER_MOMENT_LEN = 54;
 
+  // Finale glow pulse
+  let finalePulseT = 0;
+
+  // ===== UI refs =====
   let hudEl, hudStatusEl, panelEl, toastEl, controlsEl;
   let panelRosterEl, panelZorbEl, panelAudioEl, panelBackendEl, panelSpritesEl, startBtnEl;
   let uiHidden=false, hideTimer=null;
   let lastHudUpdateMs=0, lastPanelUpdateMs=0;
-  let wakeLock=null;
-
-  let accumMs = 0;
-  const FIXED_DT_MS = 1000 / PERF.physicsHz;
-
-  // Finale glow pulse
-  let finalePulseT = 0;
-  const MILESTONES = [2500, 1200, 600, 250, 120, 70, 35, 20, 10, 5];
-  const hitMilestones = new Set();
 
   function totalRemaining(){ return Math.max(0, REMAINING_TOTAL || 0); }
 
@@ -359,7 +352,6 @@
   function bubbleBounds(){
     const A = frameBounds();
     let dynCeil = Math.max(A.T, dy(CFG.bubbleCeilingDesignY));
-
     if(zorbLoaded && zorbImg){
       const sx = CFG.robotScale;
       const imgH = zorbImg.height * sx;
@@ -368,29 +360,23 @@
       const robotBottom = robotTop + imgH;
       dynCeil = Math.max(dynCeil, robotBottom + dy(18));
     }
-
-    const inset = CFG.bubbleAreaInsetDesign || {left:0,right:0,top:0,bottom:0};
+    const inset = CFG.bubbleAreaInsetDesign;
     const L = A.L + dx(inset.left);
     const R = A.R - dx(inset.right);
     const T = dynCeil + dy(inset.top);
     const B = A.B - dy(inset.bottom);
-
     return { L, R, T, B, W:(R-L), H:(B-T) };
   }
 
   function bubbleSpriteExtents(r, useGlow){
-    // distances from bubble center to the *visible* edge (accounts for transparent PNG padding)
     const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
     const sW = r*2 * (CFG.bubbleDrawScale || 1);
     const sH = sW * aspect;
-
-    const pad = CFG.bubblePadPx || {l:0,r:0,t:0,b:0};
-
+    const pad = CFG.bubblePadPx;
     let left   = sW * (0.5 - (pad.l / CFG.bubbleSpriteW));
     let right  = sW * (0.5 - (pad.r / CFG.bubbleSpriteW));
     let top    = sH * (0.5 - (pad.t / CFG.bubbleSpriteH));
     let bottom = sH * (0.5 - (pad.b / CFG.bubbleSpriteH));
-
     if(useGlow){
       const g = (CFG.glowPadPx || 0);
       const gx = sW * (g / CFG.bubbleSpriteW);
@@ -406,24 +392,6 @@
     return ["GO!"];
   }
 
-  function drawSoftCeilingFade(){
-    const B = bubbleBounds();
-    const ctx = drawingContext;
-    ctx.save();
-    const fadeH = Math.floor(dy(110));
-    const lift  = Math.floor(dy(55));
-    const yTop  = Math.floor(B.T - lift);
-    const yBot  = Math.floor(B.T + fadeH);
-    const g = ctx.createLinearGradient(0, yTop, 0, yBot);
-    g.addColorStop(0.00, "rgba(11,15,31,0.00)");
-    g.addColorStop(0.25, "rgba(11,15,31,0.22)");
-    g.addColorStop(0.55, "rgba(11,15,31,0.10)");
-    g.addColorStop(1.00, "rgba(11,15,31,0.00)");
-    ctx.fillStyle = g;
-    ctx.fillRect(Math.floor(B.L), yTop, Math.ceil(B.W), (yBot - yTop));
-    ctx.restore();
-  }
-
   function getDynamicBubbleSize(n){
     if(n<=5)   return {min:34,max:46};
     if(n<=10)  return {min:36,max:52};
@@ -434,21 +402,27 @@
     return {min:16,max:22};
   }
 
+  function clipRect(x, y, w, h){
+    const ctx = drawingContext;
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  }
+  function unclip(){ drawingContext.restore(); }
+
+  // ===== Audio helpers =====
   function unlockAudioNow(){
     if(audioUnlocked) return;
     try{ userStartAudio(); }catch(_){}
     audioUnlocked = true;
 
-    if(sfxTension){
-      try{
+    try{
+      if(sfxTension){
         sfxTension.stop();
         sfxTension.setLoop(true);
         sfxTension.amp(0, 0);
         sfxTension.play();
-      }catch(_){}
-    }
+      }
+    }catch(_){}
 
-    // Constant atmosphere: start music once, keep looping.
     if(!musicMuted) startMusicSoft();
     updatePanelStatusThrottled(true);
   }
@@ -479,7 +453,6 @@
   }
 
   function stopMusicSoft(){
-    // kept for mute/reset only
     if(!sfxMusic) return;
     if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
     if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
@@ -502,27 +475,18 @@
     else startMusicSoft();
   }
 
-  function playOne(snd, vol){
-    if(!audioUnlocked || !snd) return;
-    try{
-      if(snd.isPlaying && snd.isPlaying()) snd.stop();
-      snd.amp(SFX.master * vol, 0);
-      snd.play();
-    }catch(_){}
-  }
-
-  function playFromPool(pool, idxRefName, vol){
+  function playFromPool(pool, kind, vol){
     if(!audioUnlocked || !pool || !pool.length) return false;
     try{
-      let idx = (idxRefName === "fire") ? _fireIdx
-              : (idxRefName === "reload") ? _reloadIdx
-              : (idxRefName === "bass") ? _bassIdx
+      let idx = (kind === "fire") ? _fireIdx
+              : (kind === "reload") ? _reloadIdx
+              : (kind === "bass") ? _bassIdx
               : _wooshIdx;
 
       const snd = pool[idx % pool.length];
-      if(idxRefName === "fire") _fireIdx++;
-      else if(idxRefName === "reload") _reloadIdx++;
-      else if(idxRefName === "bass") _bassIdx++;
+      if(kind === "fire") _fireIdx++;
+      else if(kind === "reload") _reloadIdx++;
+      else if(kind === "bass") _bassIdx++;
       else _wooshIdx++;
 
       if(!snd) return false;
@@ -540,7 +504,6 @@
     if(!audioUnlocked || !sfxWooshPool.length) return;
     const now = performance.now();
     if(now - lastWooshSfxMs < WOOSH_SFX_COOLDOWN_MS) return;
-    // don't consume shot tokens; shots have priority
     lastWooshSfxMs = now;
     playFromPool(sfxWooshPool, "woosh", SFX.woosh);
   }
@@ -553,7 +516,6 @@
     }
   }
 
-  // Hard reset of all audio on sim reset so nothing keeps piling up.
   function stopAllAudio(){
     if(musicRestartTimer){ clearTimeout(musicRestartTimer); musicRestartTimer = null; }
     if(musicStopTimer){ clearTimeout(musicStopTimer); musicStopTimer = null; }
@@ -563,38 +525,30 @@
     try{ sfxTension?.stop(); }catch(_){}
     try{ sfxWinner?.stop(); }catch(_){}
 
-    const pools = [sfxFirePool, sfxReloadPool, sfxBassPool, sfxWooshPool];
-    for(const pool of pools){
+    for(const pool of [sfxFirePool, sfxReloadPool, sfxBassPool, sfxWooshPool, sfxPop]){
       if(Array.isArray(pool)){
         for(const s of pool){ try{ s?.stop(); }catch(_){ } }
       }
-    }
-    if(Array.isArray(sfxPop)){
-      for(const s of sfxPop){ try{ s?.stop(); }catch(_){ } }
     }
 
     musicStarted = false;
     winnerPlayed = false;
   }
 
-  // NEW: restart atmosphere loops after reset so music doesn't "die"
   function restartAtmosphereLoops(){
     if(!audioUnlocked) return;
-
-    if(sfxTension){
-      try{
+    try{
+      if(sfxTension){
         sfxTension.stop();
         sfxTension.setLoop(true);
         sfxTension.amp(0, 0);
         sfxTension.play();
-      }catch(_){}
-    }
-
-    if(!musicMuted){
-      startMusicSoft();
-    }
+      }
+    }catch(_){}
+    if(!musicMuted) startMusicSoft();
   }
 
+  // ===== Round parsing =====
   function normalizeHandle(h){
     if(!h) return null;
     let s = String(h).trim();
@@ -608,11 +562,21 @@
     if(s.toLowerCase() === "zorbi.ai") return true;
     return false;
   }
+  function parseRoundNumber(round){
+    const candidates = [
+      round?.round_number, round?.round, round?.roundNumber, round?.round_num, round?.roundNo, round?.round_no,
+      round?.meta?.round_number, round?.meta?.round, round?.meta?.roundNumber
+    ];
+    for(const v of candidates){
+      const n = Number(v);
+      if(Number.isFinite(n) && n > 0) return n;
+    }
+    return 2;
+  }
 
   async function loadTodayRound(){
     if(!USE_BACKEND){
       BACKEND_OK = false;
-      BACKEND_WINNER = null;
       const finalCount = Math.max(2, Math.min(5000000, Number(OFFLINE_COUNT||250)));
       rosterHandles = Array.from({length: finalCount}, (_,i)=> ("player"+(i+1)));
       rosterHandles = rosterHandles.filter(h => !isDisallowedHandle(h));
@@ -626,28 +590,29 @@
     try{
       const ctrl = new AbortController();
       const to = setTimeout(()=>ctrl.abort(), 6500);
-      const res = await fetch(ROUND_URL, { cache:"no-store", signal: ctrl.signal });
+
+      // FIX: cache buster so round number updates (helps with CDN/proxy caching).
+      const url = ROUND_URL + (ROUND_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+      const res = await fetch(url, { cache:"no-store", signal: ctrl.signal });
+
       clearTimeout(to);
       if(!res.ok) throw new Error("HTTP "+res.status);
       const round = await res.json();
 
       BACKEND_OK = true;
+
       const fc = Number(round?.finale_count || (round?.players?.length || 0) || 0);
       const finalCount = Math.max(2, fc || 50);
 
       let rawHandles = Array.isArray(round?.players)
         ? round.players.map(p => (p.handle || ("#" + p.slot)))
         : [];
-
       rawHandles = rawHandles.map(normalizeHandle).filter(h => h && !isDisallowedHandle(h));
       rosterHandles = rawHandles;
 
-      BACKEND_WINNER = normalizeHandle(round?.winner || null);
-      if(BACKEND_WINNER && isDisallowedHandle(BACKEND_WINNER)) BACKEND_WINNER = null;
-
       ROUND_META = {
         round_date: round?.round_date || null,
-        round_number: Number(round?.round_number || round?.round || 2) || 2,
+        round_number: parseRoundNumber(round),
         mode: round?.mode || "live",
         finale_count: round?.finale_count ?? finalCount,
       };
@@ -665,6 +630,7 @@
     }
   }
 
+  // ===== p5 lifecycle =====
   function preload(){
     zorbImg = loadImage('zorb.png', ()=>{ zorbLoaded=true; }, ()=>{ zorbLoaded=false; console.warn("zorb.png failed"); });
 
@@ -680,7 +646,6 @@
     fire1Img  = loadImage('fire1.png', ()=>{}, ()=>{ console.warn("Missing fire1.png"); });
     fire2Img  = loadImage('fire2.png', ()=>{}, ()=>{ console.warn("Missing fire2.png"); });
 
-    // pooled SFX (avoid stop/restart thrash)
     sfxFirePool   = [];
     sfxReloadPool = [];
     sfxBassPool   = [];
@@ -735,12 +700,7 @@
     }catch(_){}
   }
 
-  function clipRect(x, y, w, h){
-    const ctx = drawingContext;
-    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-  }
-  function unclip(){ drawingContext.restore(); }
-
+  // ===== UI =====
   function hookUI(){
     hudEl = document.getElementById('hud');
     hudStatusEl = document.getElementById('hudStatus');
@@ -807,7 +767,6 @@
     document.body.addEventListener('touchstart', gesture, { passive:true });
     document.body.addEventListener('pointerdown', gesture, { passive:true });
 
-    // Audio recovery on focus/visibility for mobile browsers
     document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) ensureAudioAlive(); });
     window.addEventListener("focus", ensureAudioAlive);
 
@@ -825,13 +784,11 @@
   function togglePause(){ if(simState !== "setup") paused = !paused; }
 
   function beginCountdown(){
-    requestWakeLock();
     showPanel(false);
     if(hideTimer) clearTimeout(hideTimer);
     setUIHidden(true);
     paused = false;
 
-    // Music stays on as constant atmosphere; tension stays muted until late game.
     setTimeout(() => {
       simState = "countdown";
       const startCount = Math.max(2, ARENA_START_COUNT || 50);
@@ -857,19 +814,7 @@
     if(simState === "setup") hideTimer = setTimeout(()=>setUIHidden(true), 1800);
   }
 
-  async function requestWakeLock(){
-    try{
-      if(!('wakeLock' in navigator)) return;
-      if(wakeLock) return;
-      wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', ()=>{ wakeLock=null; });
-    }catch(_){}
-  }
-  function releaseWakeLock(){
-    try{ wakeLock?.release?.(); }catch(_){}
-    wakeLock=null;
-  }
-
+  // ===== Spawning =====
   function getHandleForSpawn(nextId){
     const idx = (ARENA_START_COUNT - REMAINING_TOTAL) + (nextId-1);
     return rosterHandles[idx] || rosterHandles[nextId-1] || ("player" + nextId);
@@ -941,7 +886,7 @@
     b.noT = random(999);
   }
 
-  // PERFORMANCE: when remaining is huge, reduce pop particles aggressively
+  // ===== FX =====
   function particleScaleForRemaining(rem){
     if(rem >= 1200) return 0.00;
     if(rem >= 600)  return 0.10;
@@ -950,20 +895,16 @@
     return 1.00;
   }
 
-  // VISUAL ONLY (audio handled per-burst in stepFixed)
   function popBubbleFX(b){
     if(simState==="running"){
       frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakePop*(totalRemaining()<=5?1.2:1.0)));
     }
-
     const rem = totalRemaining();
     const m = particleScaleForRemaining(rem);
     if(m <= 0) return;
 
     const maxParticles = (rem >= 250) ? 1600 : 4200;
-    if(particles.length > maxParticles){
-      particles.splice(0, particles.length - maxParticles);
-    }
+    if(particles.length > maxParticles) particles.splice(0, particles.length - maxParticles);
 
     const sparks = Math.max(1, Math.floor(CFG.popParticles * m));
     const pops   = Math.max(1, Math.floor(6 * m));
@@ -979,16 +920,13 @@
     }
   }
 
-  // 1 sound per elimination burst (not per bubble)
   function playBurstSfx(elimCount, remBefore){
     if(!audioUnlocked) return;
     const now = performance.now();
     if(now - lastBurstSfxMs < BURST_SFX_COOLDOWN_MS) return;
     if(!takePopToken()) return;
-
     lastBurstSfxMs = now;
 
-    // choose ONE pop sound + ONE bass accent (optional) per burst
     try{
       const snd = random(sfxPop);
       if(snd && !(snd.isPlaying && snd.isPlaying())){
@@ -997,7 +935,6 @@
       }
     }catch(_){}
 
-    // Bass probability ramps up as it gets smaller
     const rem = Math.max(1, remBefore);
     const bassChance =
       (rem <= 10) ? 1.00 :
@@ -1006,33 +943,24 @@
       (rem <= 120) ? 0.25 :
       0.12;
 
-    if(random() < bassChance){
-      playFromPool(sfxBassPool, "bass", SFX.bass * (elimCount >= 4 ? 1.05 : 1.0));
-    }
+    if(random() < bassChance) playFromPool(sfxBassPool, "bass", SFX.bass * (elimCount >= 4 ? 1.05 : 1.0));
   }
 
-  // milestone accents (optional but cheap)
-  function maybePlayMilestone(remAfter){
-    for(const m of MILESTONES){
-      if(remAfter <= m && !hitMilestones.has(m)){
-        hitMilestones.add(m);
-        // single bass "thump"
-        if(audioUnlocked && takePopToken()){
-          playFromPool(sfxBassPool, "bass", SFX.bass * 1.15);
-        }
-        break;
-      }
-    }
+  function reloadChanceForRemaining(rem){
+    if(rem >= 2500) return 0.06;
+    if(rem >= 1200) return 0.08;
+    if(rem >= 600)  return 0.10;
+    if(rem >= 250)  return 0.14;
+    return 0.22;
   }
 
-  // Key scalability: fixed pool & recycle while remaining is huge
+  // ===== Elimination =====
   function eliminateAtIndex(i){
     if(players.length <= 0) return false;
 
     if(REMAINING_TOTAL > PERF.recycleModeThreshold){
       const b = players[i];
       if(!b) return false;
-
       popBubbleFX(b);
       REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
 
@@ -1049,31 +977,111 @@
     if(!b) return false;
     popBubbleFX(b);
     REMAINING_TOTAL = Math.max(0, REMAINING_TOTAL - 1);
-
     const last = players.length - 1;
     if(i !== last) players[i] = players[last];
     players.pop();
     return true;
   }
 
+  function burstSizeForRemaining(rem){
+    if(rem >= 2500) return 8;
+    if(rem >= 1200) return 6;
+    if(rem >= 600)  return 4;
+    if(rem >= 250)  return 3;
+    if(rem >= 120)  return 2;
+    return 1;
+  }
+
+  // fire2 should show reliably during multi-elim bursts in big games
+  function maybeSpawnBigShotTowardBubble(bubble){
+    const rem = totalRemaining();
+    if(rem < 250) return;
+    if(!bubble) return;
+    if(projectiles.length > PERF.maxProjectiles * 0.75) return;
+    if(random() < 0.45){
+      spawnCosmeticShotTo(bubble.x, bubble.y, true);
+    }
+  }
+
+  function fastEliminateOne(){
+    if(players.length <= 1) return false;
+    const victimIdx = Math.floor(random(players.length));
+    const v = players[victimIdx];
+    if(!v) return false;
+
+    zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
+    zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
+    zorb.recoil = 0.35;
+
+    if(random() < 0.55){
+      const big = (totalRemaining() >= 250);
+      spawnCosmeticShotTo(zorb.aimX, zorb.aimY, big);
+    }
+
+    return eliminateAtIndex(victimIdx);
+  }
+
+  function pickTarget(){
+    const b = players.length ? random(players) : null;
+    return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6, bubble:null };
+  }
+
+  function spawnCosmeticShotTo(targetX, targetY, bigShot=false){
+    const origin = random(cannonOrigins());
+    const dir = createVector(targetX-origin.x, targetY-origin.y).normalize();
+    const speed = CFG.projectileSpeed * (bigShot ? 0.78 : 0.92);
+    const vel = dir.mult(speed);
+
+    if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
+    const pr = new Projectile(origin.x, origin.y, vel.x, vel.y);
+    pr.cosmetic = true;
+    pr.bigShot = !!bigShot;
+    pr.ttl = bigShot ? 0.46 : 0.30;
+    projectiles.push(pr);
+
+    if(takeShotToken()) playFromPool(sfxFirePool, "fire", SFX.fire);
+    zorb.recoil = bigShot ? 1.05 : 0.85;
+  }
+
+  function fireShot(){
+    const origin = random(cannonOrigins());
+    const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
+    const vel = dir.mult(CFG.projectileSpeed);
+
+    if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
+    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y));
+
+    if(takeShotToken()){
+      playFromPool(sfxFirePool, "fire", SFX.fire);
+      const now = performance.now();
+      const rem = totalRemaining();
+      if(now - lastReloadSfxMs > RELOAD_SFX_COOLDOWN_MS && random() < reloadChanceForRemaining(rem)){
+        lastReloadSfxMs = now;
+        playFromPool(sfxReloadPool, "reload", SFX.reload);
+      }
+    }
+
+    zorb.recoil = 1.0;
+    if(simState==="running"){
+      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8)));
+    }
+  }
+
+  // ===== Reset =====
   function resetSim(keepSetupState){
     stopAllAudio();
-    restartAtmosphereLoops(); // <-- NEW: keeps music/tension alive after reset (if unlocked + not muted)
+    restartAtmosphereLoops();
 
     players=[]; projectiles=[]; particles=[]; bursts=[]; frameShake=0;
     paused=false; winnerPlayed=false;
     winnerMomentFrames = 0;
     accumMs = 0;
-
     elimBudget = 0;
     lastBurstSfxMs = 0;
     lastWooshSfxMs = 0;
-
     popTokens = 0;
     shotTokens = 0;
-
     finalePulseT = 0;
-    hitMilestones.clear();
 
     zorb.y = height * CFG.robotY + dy(CFG.robotYOffsetDesign);
     zorb.aimX = width * 0.5;
@@ -1104,6 +1112,7 @@
     updateHudThrottled(true);
   }
 
+  // ===== Simulation loop =====
   function draw(){
     if(!paused){
       const dt = Math.min(50, deltaTime || 16);
@@ -1175,125 +1184,11 @@
     return 0.35 + 0.65 * eased;
   }
 
-  // "Burst eliminations based on remaining count"
-  function burstSizeForRemaining(rem){
-    if(rem >= 2500) return 8;
-    if(rem >= 1200) return 6;
-    if(rem >= 600)  return 4;
-    if(rem >= 250)  return 3;
-    if(rem >= 120)  return 2;
-    return 1;
-  }
-
-  function fastEliminateOne(){
-    if(players.length <= 1) return false;
-    const victimIdx = Math.floor(random(players.length));
-    const v = players[victimIdx];
-    if(!v) return false;
-
-    // aim animation + occasional cosmetic shot so big battles still show firing
-    zorb.aimX = v.x + random(-CFG.aimJitter, CFG.aimJitter);
-    zorb.aimY = v.y + random(-CFG.aimJitter, CFG.aimJitter);
-    zorb.recoil = 0.35;
-
-    if(random() < 0.55){
-      const rem = totalRemaining();
-      const big = (rem >= 250); // <-- fire2 only used as "big shot" during large rounds
-      spawnCosmeticShotTo(zorb.aimX, zorb.aimY, big);
-    }
-
-    return eliminateAtIndex(victimIdx);
-  }
-
-  function pickTarget(){
-    const b = players.length ? random(players) : null;
-    return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6 };
-  }
-
-  // UPDATED: support bigShot flag. fire2 is ONLY used by big shots.
-  function spawnCosmeticShotTo(targetX, targetY, bigShot=false){
-    const origin = random(cannonOrigins());
-    const dir = createVector(targetX-origin.x, targetY-origin.y).normalize();
-
-    const speed = CFG.projectileSpeed * (bigShot ? 0.78 : 0.92);
-    const vel = dir.mult(speed);
-
-    if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
-    const pr = new Projectile(origin.x, origin.y, vel.x, vel.y);
-    pr.cosmetic = true;
-    pr.bigShot = !!bigShot;
-    pr.ttl = bigShot ? 0.42 : 0.28;
-    projectiles.push(pr);
-
-    if(takeShotToken()){
-      playFromPool(sfxFirePool, "fire", SFX.fire);
-    }
-    zorb.recoil = bigShot ? 1.05 : 0.85;
-  }
-
-  // UPDATED: Burst is now a flash ring (NOT fire2)
-  class Burst{
-    constructor(x,y,angle=0,life=10,scale=1){
-      this.x=x; this.y=y;
-      this.angle=angle;
-      this.life=life; this.maxLife=life;
-      this.scale=scale;
-      this.dead=false;
-    }
-    update(){
-      this.life -= 1;
-      if(this.life<=0) this.dead=true;
-    }
-    draw(){
-      const t = 1 - (this.life / this.maxLife);
-      const a = 255 * (1 - t);
-      const r0 = (28 + 42*t) * this.scale;
-
-      push();
-      translate(this.x, this.y);
-      noFill();
-      stroke(255, 180, 255, a * 0.75);
-      strokeWeight(3 * this.scale);
-      circle(0, 0, r0*2);
-
-      stroke(255, 255, 255, a * 0.55);
-      strokeWeight(1.5 * this.scale);
-      circle(0, 0, (r0*1.25)*2);
-      pop();
-    }
-  }
-
-  function fireShot(){
-    const origin = random(cannonOrigins());
-    const dir = createVector(zorb.aimX-origin.x, zorb.aimY-origin.y).normalize();
-    const vel = dir.mult(CFG.projectileSpeed);
-
-    if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
-    projectiles.push(new Projectile(origin.x, origin.y, vel.x, vel.y));
-
-    // Fire is priority; reload is throttled so it doesn't spam
-    if(takeShotToken()){
-      playFromPool(sfxFirePool, "fire", SFX.fire);
-      const now = performance.now();
-      if(now - lastReloadSfxMs > RELOAD_SFX_COOLDOWN_MS && random() < 0.35){
-        lastReloadSfxMs = now;
-        playFromPool(sfxReloadPool, "reload", SFX.reload);
-      }
-    }
-
-    zorb.recoil = 1.0;
-    if(simState==="running"){
-      frameShake = Math.min(CFG.shakeCap, Math.max(frameShake, CFG.screenShakeShot*(totalRemaining()<=5?1.0:0.8)));
-    }
-  }
-
   function stepFixed(dt){
     ensureAudioAlive();
     zorb.recoil *= 0.86;
 
     const remainingBefore = totalRemaining();
-
-    // refill audio budgets every sim tick
     refillSfxTokens(dt, remainingBefore);
 
     for(const b of players) b.update();
@@ -1315,7 +1210,7 @@
       if(bursts[i].dead) bursts.splice(i,1);
     }
 
-    // tension loop late game
+    // tension late game
     tensionTarget = (remainingBefore<=10 && simState==="running") ? 1 : 0;
     tensionVol = lerp(tensionVol, tensionTarget, 0.02);
     if(audioUnlocked && sfxTension){
@@ -1327,7 +1222,6 @@
       if(countdownFrames<=0){
         simState="running";
         countdownFrames=0;
-        // music already running
       }
       return;
     }
@@ -1341,9 +1235,14 @@
     const useDirect = (remainingBefore > DIRECT_POP_THRESHOLD);
     let elimThisTick = 0;
 
-    // burst eliminations (single burst SFX for the group)
     const burstN = burstSizeForRemaining(remainingBefore);
     const toDo = Math.min(Math.floor(elimBudget), burstN);
+
+    // Fire2 visibility: show big projectile at start of multi-elim bursts in big games
+    if(useDirect && remainingBefore >= 250 && toDo >= 3){
+      const t0 = pickTarget();
+      if(t0?.bubble) maybeSpawnBigShotTowardBubble(t0.bubble);
+    }
 
     for(let k=0; k<toDo && totalRemaining() > 1; k++){
       if(useDirect){
@@ -1363,10 +1262,8 @@
       elimBudget -= 1;
     }
 
-    // Burst SFX: once per tick if we eliminated anything
     if(elimThisTick > 0){
       playBurstSfx(elimThisTick, remainingBefore);
-      maybePlayMilestone(totalRemaining());
     }
 
     zorb.fireCooldown = Math.max(0, zorb.fireCooldown - dt);
@@ -1380,57 +1277,66 @@
       if(!winnerPlayed){
         winnerPlayed=true;
         duckMusic();
-        playOne(sfxWinner, SFX.winner);
-
-        (async () => {
-          try { await reportWinnerToBackend(players[0]); } catch(e){ console.warn(e); }
-          finally { releaseWakeLock(); }
-        })();
+        try{
+          if(sfxWinner){
+            if(sfxWinner.isPlaying && sfxWinner.isPlaying()) sfxWinner.stop();
+            sfxWinner.amp(SFX.master*SFX.winner, 0);
+            sfxWinner.play();
+          }
+        }catch(_){}
+        reportWinnerToBackend(players[0]);
       }
     }
 
-    // pulse time for glow overlay
     if(totalRemaining() <= 10 && simState==="running"){
       const rem = Math.max(1, totalRemaining());
-      const speed = (rem <= 5) ? 0.018 : 0.010; // faster for final 5
+      const speed = (rem <= 5) ? 0.018 : 0.010;
       finalePulseT += speed;
     }else{
       finalePulseT *= 0.98;
     }
   }
 
+  // ===== Rendering =====
   function drawFinaleGlowOverlay(){
     if(!bgGlowImg) return;
     const rem = totalRemaining();
     if(!(simState==="running" || simState==="finished")) return;
     if(rem > 10) return;
-
-    // dramatic pulse: stronger as it gets smaller
     const t = finalePulseT;
     const pulse = 0.5 + 0.5*Math.sin(t * 2.0);
     const strength = (rem <= 5) ? (0.45 + pulse*0.40) : (0.25 + pulse*0.25);
     const alpha = 255 * constrain(strength, 0, 0.95);
-
     push();
-    blendMode(SCREEN);   // brightens without muddying
-    tint(255, 255, 255, alpha);
+    blendMode(SCREEN);
+    tint(255,255,255, alpha);
     image(bgGlowImg, 0, 0, width, height);
     blendMode(BLEND);
     noTint();
     pop();
   }
 
+  function drawVignette(){
+    noFill();
+    for(let i=0;i<12;i++){
+      stroke(0,0,0,14);
+      rect(-i,-i, width+2*i, height+2*i, 22);
+    }
+  }
+
   function render(){
     background(0);
     const A = frameBounds();
-    clipRect(A.L, A.T, A.W, A.H);
+
+    // Clip only for gameplay arena, NOT for winner card
+    if(simState !== "finished"){
+      clipRect(A.L, A.T, A.W, A.H);
+    }
 
     background(CFG.bgColor);
-    if (bgImg) image(bgImg, 0, 0, width, height);
+    if(bgImg) image(bgImg, 0, 0, width, height);
 
-    // dramatic pulsing overlay for final 10 (especially final 5)
     drawFinaleGlowOverlay();
-
     if(CFG.vignette) drawVignette();
 
     let sx=0, sy=0;
@@ -1449,7 +1355,6 @@
     for(const bx of bursts) bx.draw();
     for(const p of projectiles) p.draw();
 
-    drawSoftCeilingFade();
     drawZorb();
     if(simState==="countdown") drawCountdown();
 
@@ -1463,23 +1368,17 @@
     }
 
     pop();
-    unclip();
 
-    if(simState!=="finished") drawUIFrameOverlayExact();
-    if(simState!=="finished") drawTopBannerTextBoxes();
+    if(simState !== "finished"){
+      unclip();
+      drawUIFrameOverlayExact();
+      drawTopBannerTextBoxes();
+    }
   }
 
   function drawUIFrameOverlayExact(){
     if(!uiFrameImg) return;
     push(); imageMode(CORNER); image(uiFrameImg, 0, 0, width, height); pop();
-  }
-
-  function drawVignette(){
-    noFill();
-    for(let i=0;i<12;i++){
-      stroke(0,0,0,14);
-      rect(-i,-i, width+2*i, height+2*i, 22);
-    }
   }
 
   function drawTextInBox(str, x, y, w, h, align){
@@ -1503,12 +1402,6 @@
     while(textWidth(str) > (w - pad*2) && ts > minTs){
       ts -= 1;
       textSize(ts);
-    }
-
-    if(textWidth(str) > (w - pad*2)){
-      const short = str.replace(/^PLAYERS\s+/i, "");
-      textSize(ts);
-      if(textWidth(short) <= (w - pad*2)) str = short;
     }
 
     textAlign(align==="right" ? RIGHT : align==="center" ? CENTER : LEFT, CENTER);
@@ -1548,16 +1441,14 @@
       image(zorbImg, robotX, zorb.y+hoverY, zorbImg.width*scaleAmt, zorbImg.height*scaleAmt);
       pop();
     }
-
-    for(const o of cannonOrigins()){
-      noStroke(); fill(255,220,0,12); circle(o.x,o.y,12);
-    }
   }
 
   function drawCountdown(){
     const secLeft = ceil(countdownFrames/60);
     const idx = (countdownLabels && countdownLabels.length) ? (countdownLabels.length - secLeft) : 0;
-    const label = (countdownLabels && countdownLabels.length) ? countdownLabels[constrain(idx, 0, countdownLabels.length-1)] : String(secLeft);
+    const label = (countdownLabels && countdownLabels.length)
+      ? countdownLabels[constrain(idx, 0, countdownLabels.length-1)]
+      : String(secLeft);
 
     if(secLeft !== lastCountdownSec){
       lastCountdownSec = secLeft;
@@ -1589,12 +1480,10 @@
     const t = (WINNER_MOMENT_LEN - winnerMomentFrames) / WINNER_MOMENT_LEN;
     const popScale = 1 + 0.10 * Math.sin(Math.min(1, t) * Math.PI);
     const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
-
     push();
     translate(b.x, b.y);
     const sW = (b.r*2) * popScale;
     const sH = sW * aspect;
-
     if(glowImg){
       imageMode(CENTER);
       tint(255,255,255, 220);
@@ -1607,18 +1496,16 @@
     pop();
   }
 
+  // FIX: winnerframe should be full-screen, same size as background (NOT clipped to arena)
   function drawWinnerCard(b){
     background(0);
-    const A = frameBounds();
-    clipRect(A.L, A.T, A.W, A.H);
-
     background(6,4,12);
     if(bgImg) image(bgImg, 0, 0, width, height);
 
     if(winnerFrameImg){
       push();
       imageMode(CORNER);
-      image(winnerFrameImg, A.L, A.T, A.W, A.H);
+      image(winnerFrameImg, 0, 0, width, height);
       pop();
     }
 
@@ -1627,9 +1514,9 @@
     const wfW = (winnerFrameImg && winnerFrameImg.width) ? winnerFrameImg.width : DESIGN.w;
     const wfH = (winnerFrameImg && winnerFrameImg.height) ? winnerFrameImg.height : DESIGN.h;
 
-    const nameX = A.L + (A.W * (CFG.winnerNameCenterXDesign / wfW));
-    const nameY = A.T + (A.H * (CFG.winnerNameCenterYDesign / wfH));
-    const maxW  = A.W * (CFG.winnerNameMaxWDesign / wfW);
+    const nameX = (width * (CFG.winnerNameCenterXDesign / wfW));
+    const nameY = (height * (CFG.winnerNameCenterYDesign / wfH));
+    const maxW  = width * (CFG.winnerNameMaxWDesign / wfW);
 
     textAlign(CENTER, CENTER);
     let ts = min(72, maxW * 0.18);
@@ -1644,9 +1531,9 @@
     fill(255);
     text(nameRaw, nameX, nameY);
 
-    const ctaX = A.L + A.W * 0.50;
-    const ctaY = A.T + A.H * 0.68;
-    const ctaMaxW = A.W * 0.80;
+    const ctaX = width * 0.50;
+    const ctaY = height * 0.68;
+    const ctaMaxW = width * 0.80;
 
     const lines = ['Follow @Zorbi.ai','Comment "IN"','Enter The Arena'];
 
@@ -1671,22 +1558,17 @@
     for(let i=0;i<lines.length;i++){
       text(lines[i], ctaX, startY + i*lineH);
     }
-
-    unclip();
   }
 
+  // ===== Entities =====
   class Bubble{
     constructor(id, handle, x, y, r, rSeed=0.5){
       this.id=id;
       this.handle=handle||null;
       this.x=x; this.y=y; this.r=r;
       this.rSeed = rSeed;
-
       this.v=createVector(random(-1,1), random(-1,1)).mult(random(0.6,1.6));
-      this.spin=random([-1,1])*random(0.8,1.35);
-      this.swirl=random(0.6,1.4);
       this.noT = random(999);
-
       this.label = this.handle ? ("@"+this.handle) : ("#"+this.id);
     }
 
@@ -1701,17 +1583,6 @@
       const n2 = noise(this.y*0.0020, this.x*0.0020, this.noT+40);
       this.v.x += (n1-0.5) * CFG.wanderForce;
       this.v.y += (n2-0.5) * CFG.wanderForce;
-
-      const cx=width*0.5, cy=height*0.58;
-      const toC=createVector(cx-this.x, cy-this.y);
-      const tangent=createVector(-toC.y, toC.x).normalize()
-        .mult(CFG.swirlStrength*this.spin*this.swirl);
-      this.v.add(tangent);
-
-      if(random() < CFG.swirlJukeChance){
-        const j=p5.Vector.random2D().mult(CFG.swirlJukeForce*random(0.7,1.2));
-        this.v.add(j);
-      }
 
       const maxV = CFG.maxSpeed;
       const m = this.v.mag();
@@ -1755,11 +1626,9 @@
     draw(){
       const rem = totalRemaining();
       const alpha = (rem > CFG.namesFadeStartN) ? 0 : (rem <= CFG.namesFadeFullN ? 255 : map(rem, CFG.namesFadeStartN, CFG.namesFadeFullN, 0, 255));
-
       const aspect = (CFG.bubbleSpriteH / CFG.bubbleSpriteW) || 1;
       const sW = this.r*2 * CFG.bubbleDrawScale;
       const sH = sW * aspect;
-
       const useGlowSprite = (rem <= CFG.glowSwapFinalN) && !!glowImg;
 
       push();
@@ -1784,7 +1653,7 @@
 
         const spriteHalfH = CFG.bubbleSpriteH * 0.5;
         const spriteDeltaY = (CFG.bubbleContentCenterYPx - spriteHalfH) / CFG.bubbleSpriteH;
-        const yOff = (spriteDeltaY * sH) + (CFG.bubbleLabelExtraYOffset || 0);
+        const yOff = (spriteDeltaY * sH);
 
         push();
         translate(0, yOff);
@@ -1813,13 +1682,10 @@
       this.v=createVector(vx,vy);
       this.r=CFG.projectileRadius;
       this.dead=false;
-
       this.cosmetic = false;
-      this.ttl = 1.2; // seconds (used for cosmetic + offscreen safety)
+      this.ttl = 1.2;
       this.angle = this.v.heading();
-
-      // NEW: bigShot uses fire2.png, otherwise fire1.png
-      this.bigShot = false;
+      this.bigShot = false; // bigShot uses fire2
     }
     update(dt){
       this.x += this.v.x;
@@ -1827,20 +1693,16 @@
       this.angle = this.v.heading();
       this.ttl -= dt;
       if(this.ttl <= 0){ this.dead = true; return; }
-
       if(this.y > height+140 || this.x < -140 || this.x > width+140){
         this.dead=true; return;
       }
-
       if(this.cosmetic) return;
-
       for(let i=players.length-1;i>=0;i--){
         const b=players[i];
         const dx=this.x-b.x, dy=this.y-b.y;
         if(dx*dx+dy*dy < (b.r + this.r)*(b.r + this.r)){
-          const ang = this.angle; // use shot direction for the burst
           eliminateAtIndex(i);
-          bursts.push(new Burst(b.x, b.y, ang, 11, (totalRemaining()<=20?1.05:0.90)));
+          bursts.push(new Burst(b.x, b.y, 11, (totalRemaining()<=20?1.05:0.90)));
           this.dead=true;
           break;
         }
@@ -1848,22 +1710,16 @@
     }
     draw(){
       const img = (this.bigShot && fire2Img) ? fire2Img : fire1Img;
-
       if(img){
         const baseW = this.bigShot ? Math.max(dw(140), this.r*16.0) : Math.max(dw(46), this.r*7.2);
         const baseH = baseW * (img.height / img.width);
-
         push();
         translate(this.x, this.y);
-
         if(this.bigShot){
-          // fire2 faces right
-          rotate(this.angle);
+          rotate(this.angle);          // fire2 faces right
         }else{
-          // fire1 faces top-right (45deg)
-          rotate(this.angle + Math.PI/4);
+          rotate(this.angle + Math.PI/4); // fire1 faces top-right
         }
-
         imageMode(CENTER);
         tint(255,255,255, this.cosmetic ? 210 : 255);
         image(img, 0, 0, baseW, baseH);
@@ -1874,6 +1730,34 @@
         fill(255,120,0,40); circle(this.x,this.y,this.r*3.6);
         fill(255,240,120,220); circle(this.x,this.y,this.r*1.6);
       }
+    }
+  }
+
+  class Burst{
+    constructor(x,y,life=10,scale=1){
+      this.x=x; this.y=y;
+      this.life=life; this.maxLife=life;
+      this.scale=scale;
+      this.dead=false;
+    }
+    update(){
+      this.life -= 1;
+      if(this.life<=0) this.dead=true;
+    }
+    draw(){
+      const t = 1 - (this.life / this.maxLife);
+      const a = 255 * (1 - t);
+      const r0 = (28 + 42*t) * this.scale;
+      push();
+      translate(this.x, this.y);
+      noFill();
+      stroke(255, 180, 255, a * 0.75);
+      strokeWeight(3 * this.scale);
+      circle(0, 0, r0*2);
+      stroke(255, 255, 255, a * 0.55);
+      strokeWeight(1.5 * this.scale);
+      circle(0, 0, (r0*1.25)*2);
+      pop();
     }
   }
 
@@ -1933,7 +1817,7 @@
     panelBackendEl.classList.toggle('ok', (!USE_BACKEND) || BACKEND_OK);
     panelBackendEl.classList.toggle('bad', USE_BACKEND && !BACKEND_OK);
 
-    spritesOk = !!(bubbleImg && glowImg);
+    spritesOk = !!(bubbleImg && glowImg && fire1Img && fire2Img);
     panelSpritesEl.textContent = spritesOk ? "Sprites: OK" : "Sprites: missing";
     panelSpritesEl.classList.toggle('ok', spritesOk);
     panelSpritesEl.classList.toggle('warn', !spritesOk);
