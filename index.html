@@ -233,7 +233,8 @@
     // Sprite padding (transparent margins) in source images
     bubblePadPx: { l:46, r:40, t:24, b:36 },
     glowPadPx: 30,
-bannerBoxWDesign: 270,
+
+    bannerBoxWDesign: 270,
     bannerBoxHDesign: 85,
     bannerInsetXDesign: 148,
     bannerTopYDesign: 262,
@@ -398,7 +399,6 @@ bannerBoxWDesign: 270,
     }
     return { left, right, top, bottom, sW, sH };
   }
-
 
   function buildCountdownLabels(startCount){
     if(startCount >= 25) return ["3","2","1","GO!"];
@@ -575,6 +575,24 @@ bannerBoxWDesign: 270,
 
     musicStarted = false;
     winnerPlayed = false;
+  }
+
+  // NEW: restart atmosphere loops after reset so music doesn't "die"
+  function restartAtmosphereLoops(){
+    if(!audioUnlocked) return;
+
+    if(sfxTension){
+      try{
+        sfxTension.stop();
+        sfxTension.setLoop(true);
+        sfxTension.amp(0, 0);
+        sfxTension.play();
+      }catch(_){}
+    }
+
+    if(!musicMuted){
+      startMusicSoft();
+    }
   }
 
   function normalizeHandle(h){
@@ -1040,6 +1058,7 @@ bannerBoxWDesign: 270,
 
   function resetSim(keepSetupState){
     stopAllAudio();
+    restartAtmosphereLoops(); // <-- NEW: keeps music/tension alive after reset (if unlocked + not muted)
 
     players=[]; projectiles=[]; particles=[]; bursts=[]; frameShake=0;
     paused=false; winnerPlayed=false;
@@ -1178,7 +1197,9 @@ bannerBoxWDesign: 270,
     zorb.recoil = 0.35;
 
     if(random() < 0.55){
-      spawnCosmeticShotTo(zorb.aimX, zorb.aimY);
+      const rem = totalRemaining();
+      const big = (rem >= 250); // <-- fire2 only used as "big shot" during large rounds
+      spawnCosmeticShotTo(zorb.aimX, zorb.aimY, big);
     }
 
     return eliminateAtIndex(victimIdx);
@@ -1189,24 +1210,28 @@ bannerBoxWDesign: 270,
     return b ? { x:b.x, y:b.y, bubble:b } : { x:width*0.5, y:height*0.6 };
   }
 
-
-  function spawnCosmeticShotTo(targetX, targetY){
+  // UPDATED: support bigShot flag. fire2 is ONLY used by big shots.
+  function spawnCosmeticShotTo(targetX, targetY, bigShot=false){
     const origin = random(cannonOrigins());
     const dir = createVector(targetX-origin.x, targetY-origin.y).normalize();
-    const vel = dir.mult(CFG.projectileSpeed * 0.92);
+
+    const speed = CFG.projectileSpeed * (bigShot ? 0.78 : 0.92);
+    const vel = dir.mult(speed);
 
     if(projectiles.length >= PERF.maxProjectiles) projectiles.splice(0, projectiles.length - PERF.maxProjectiles + 1);
     const pr = new Projectile(origin.x, origin.y, vel.x, vel.y);
     pr.cosmetic = true;
-    pr.ttl = 0.28; // seconds
+    pr.bigShot = !!bigShot;
+    pr.ttl = bigShot ? 0.42 : 0.28;
     projectiles.push(pr);
 
     if(takeShotToken()){
       playFromPool(sfxFirePool, "fire", SFX.fire);
     }
-    zorb.recoil = 0.85;
+    zorb.recoil = bigShot ? 1.05 : 0.85;
   }
 
+  // UPDATED: Burst is now a flash ring (NOT fire2)
   class Burst{
     constructor(x,y,angle=0,life=10,scale=1){
       this.x=x; this.y=y;
@@ -1220,20 +1245,20 @@ bannerBoxWDesign: 270,
       if(this.life<=0) this.dead=true;
     }
     draw(){
-      const a = map(this.life, 0, this.maxLife, 0, 255);
-      if(!fire2Img){
-        noStroke(); fill(255,160,255,a*0.6); circle(this.x,this.y, 48*this.scale);
-        return;
-      }
-      const baseW = Math.min(dw(420), width*0.60) * this.scale;
-      const baseH = baseW * (fire2Img.height / fire2Img.width);
+      const t = 1 - (this.life / this.maxLife);
+      const a = 255 * (1 - t);
+      const r0 = (28 + 42*t) * this.scale;
+
       push();
       translate(this.x, this.y);
-      rotate(this.angle); // fire2 faces right
-      imageMode(CENTER);
-      tint(255,255,255, a);
-      image(fire2Img, 0, 0, baseW, baseH);
-      noTint();
+      noFill();
+      stroke(255, 180, 255, a * 0.75);
+      strokeWeight(3 * this.scale);
+      circle(0, 0, r0*2);
+
+      stroke(255, 255, 255, a * 0.55);
+      strokeWeight(1.5 * this.scale);
+      circle(0, 0, (r0*1.25)*2);
       pop();
     }
   }
@@ -1403,7 +1428,7 @@ bannerBoxWDesign: 270,
     background(CFG.bgColor);
     if (bgImg) image(bgImg, 0, 0, width, height);
 
-    // NEW: dramatic pulsing overlay for final 10 (especially final 5)
+    // dramatic pulsing overlay for final 10 (especially final 5)
     drawFinaleGlowOverlay();
 
     if(CFG.vignette) drawVignette();
@@ -1792,6 +1817,9 @@ bannerBoxWDesign: 270,
       this.cosmetic = false;
       this.ttl = 1.2; // seconds (used for cosmetic + offscreen safety)
       this.angle = this.v.heading();
+
+      // NEW: bigShot uses fire2.png, otherwise fire1.png
+      this.bigShot = false;
     }
     update(dt){
       this.x += this.v.x;
@@ -1819,17 +1847,26 @@ bannerBoxWDesign: 270,
       }
     }
     draw(){
-      // fire1 faces top-right (45deg); rotate so it matches travel direction
-      if(fire1Img){
-        const baseW = Math.max(dw(46), this.r*7.2);
-        const baseH = baseW * (fire1Img.height / fire1Img.width);
-        const rot = this.angle - Math.PI/4;
+      const img = (this.bigShot && fire2Img) ? fire2Img : fire1Img;
+
+      if(img){
+        const baseW = this.bigShot ? Math.max(dw(140), this.r*16.0) : Math.max(dw(46), this.r*7.2);
+        const baseH = baseW * (img.height / img.width);
+
         push();
         translate(this.x, this.y);
-        rotate(rot);
+
+        if(this.bigShot){
+          // fire2 faces right
+          rotate(this.angle);
+        }else{
+          // fire1 faces top-right (45deg)
+          rotate(this.angle - Math.PI/4);
+        }
+
         imageMode(CENTER);
         tint(255,255,255, this.cosmetic ? 210 : 255);
-        image(fire1Img, 0, 0, baseW, baseH);
+        image(img, 0, 0, baseW, baseH);
         noTint();
         pop();
       }else{
