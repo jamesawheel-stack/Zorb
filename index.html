@@ -687,10 +687,7 @@
       BACKEND_WINNER = normalizeHandle(round?.winner || null);
       if(BACKEND_WINNER && isDisallowedHandle(BACKEND_WINNER)) BACKEND_WINNER = null;
 
-      // ROUND NUMBER FIX:
-      // Prefer explicit round_number; if absent, fall back to claimed_total (per your Supabase screenshot), then 'round'.
-      const rn =
-        Number(round?.round_number ?? round?.round ?? round?.claimed_total ?? round?.round_claimed_total ?? 0) || 0;
+      const rn = Number(round?.round_number ?? 0) || 1;
 
       ROUND_META = {
         round_date: round?.round_date || null,
@@ -1582,7 +1579,7 @@
     const a = ARENA_START_COUNT || n;
     const leftLabel = (a >= 1000) ? `${n}/${a}` : `PLAYERS ${n}/${a}`;
 
-    const rn = ROUND_META?.round_number || ROUND_META?.claimed_total || 1;
+    const rn = ROUND_META?.round_number || 1;
     drawTextInBox(leftLabel, leftX, topY, boxW, boxH, "center");
     drawTextInBox(`ROUND ${rn}`, rightX, topY, boxW, boxH, "center");
   }
@@ -2003,7 +2000,7 @@
     const mode = ROUND_META?.mode ? ` • ${ROUND_META.mode}` : "";
     const backend = BACKEND_OK ? " • backend OK" : " • backend offline";
     const cd = (simState==="countdown") ? ` • starts in ${ceil(countdownFrames/60)}s` : "";
-    const rn = ROUND_META?.round_number || ROUND_META?.claimed_total || 1;
+    const rn = ROUND_META?.round_number || 1;
 
     hudStatusEl.textContent =
       `State: ${state} • Round: ${rn}${rd}${mode}${backend} • Zorb: ${z} • Audio: ${a}` +
