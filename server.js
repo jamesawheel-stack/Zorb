@@ -57,13 +57,23 @@ app.use((req, res, next) => {
 });
 
 // ---------------- HELPERS ----------------
-function todayIdUTC() {
-  return new Date().toISOString().slice(0, 10);
+function todayIdET() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date()); // "YYYY-MM-DD"
 }
-function yesterdayIdUTC() {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+
+function yesterdayIdET() {
+  const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }
 function randSeed() {
   return Date.now() * 1000 + Math.floor(Math.random() * 1000);
@@ -195,15 +205,22 @@ async function getTodayRound() {
   const { data, error } = await supabase
     .from("rounds")
     .select("*")
-    .eq("round_date", todayIdUTC())
+    .eq("round_date", todayIdET())
     .single();
   if (error) return null;
   return data;
 }
+async function getRoundCount() {
+  const { count, error } = await supabase
+    .from("rounds")
+    .select("*", { count: "exact", head: true });
+  if (error) throw new Error(`Supabase count failed: ${error.message}`);
+  return count || 0;
+}
 
 // ---------------- ROUND GENERATION ----------------
 async function generateRound({ requestedMaxPlayers } = {}) {
-  const round_date = todayIdUTC();
+  const round_date = todayIdET();
   const seed = randSeed();
 
   const cap = clampInt(
@@ -328,7 +345,11 @@ app.get("/top50.json", async (req, res) => {
   try {
     let round = await getTodayRound();
     if (!round) round = await generateRound();
-    res.json(round);
+
+    // round_number = how many rounds exist total
+    const round_number = await getRoundCount();
+
+    res.json({ ...round, round_number });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -336,7 +357,7 @@ app.get("/top50.json", async (req, res) => {
 
 app.post("/round/today/winner", async (req, res) => {
   try {
-    const round_date = todayIdUTC();
+    const round_date = todayIdET();
     const winner = safeStr(req.body?.winner, 64);
     const winnerSlotRaw = req.body?.winnerSlot;
     const winner_slot = Number.isFinite(Number(winnerSlotRaw)) ? Math.trunc(Number(winnerSlotRaw)) : null;
@@ -360,7 +381,7 @@ app.post("/round/today/winner", async (req, res) => {
 
 app.get("/round/today/winner", async (req, res) => {
   try {
-    const round_date = todayIdUTC();
+    const round_date = todayIdET();
 
     const { data, error } = await supabase
       .from("rounds")
